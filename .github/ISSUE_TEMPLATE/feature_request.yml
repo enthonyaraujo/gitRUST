@@ -1,0 +1,23 @@
+name: Feature Request
+description: Propose a capability aligned with the gitRUST roadmap
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before submitting a feature request, please check `docs/ROADMAP.md` to see whether the capability is already planned for an upcoming stage.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or Workflow Need
+      description: Describe the Git workflow problem this feature addresses
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Behavior
+      description: Describe the desired user experience and any security/performance considerations
+    validations:
+      required: true
