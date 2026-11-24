@@ -1,0 +1,27 @@
+[package]
+name = "gitrust-app"
+description = "Native desktop application entrypoint for gitRUST."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "gitrust"
+path = "src/main.rs"
+
+[dependencies]
+eframe.workspace = true
+egui.workspace = true
+gitrust-core.workspace = true
+gitrust-git.workspace = true
+gitrust-providers.workspace = true
+gitrust-storage.workspace = true
+gitrust-ui.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true
