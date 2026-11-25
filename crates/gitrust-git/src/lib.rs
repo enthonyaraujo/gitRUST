@@ -5,15 +5,16 @@
 //! for **Stage 02 (Git Engine)** as documented in `docs/ARCHITECTURE.md` and
 //! `docs/adr/0003-git-cli-initial-integration-strategy.md`.
 //!
-//! This crate currently defines compile-time safety invariants required by the
-//! security baseline:
+//! This crate currently enforces compile-time and constructor safety invariants
+//! required by the security baseline:
 //! - Direct process execution with discrete `OsString` arguments (never via shell).
-//! - Non-UTF-8 path preservation (`PathBuf` / `OsStr`).
+//! - Strict Git subcommand validation rejecting leading-dash option injection (`-c`, `--exec-path`).
+//! - Non-UTF-8 path preservation (`Path` / `PathBuf` / `OsStr`).
 //! - Explicit classification of read-only vs. write vs. destructive operations.
 
 use std::ffi::{OsStr, OsString};
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use gitrust_core::CrateStageStatus;
 
@@ -47,9 +48,12 @@ pub enum CommandSpecError {
     EmptyRepositoryPath,
     /// Subcommand name was empty.
     EmptySubcommand,
-    /// An argument contained an embedded NUL byte, which OS `exec` APIs reject.
+    /// Subcommand failed strict ASCII Git command-name validation (e.g. started with `-`
+    /// or contained whitespace, slashes, or shell metacharacters).
+    InvalidSubcommand,
+    /// Repository path or an argument contained an embedded NUL byte, which OS `exec` APIs reject.
     InteriorNulByte {
-        /// Zero-based index of the offending argument.
+        /// Zero-based index (`0` for repository path, `1..=N` for discrete arguments).
         argument_index: usize,
     },
 }
@@ -59,8 +63,17 @@ impl fmt::Display for CommandSpecError {
         match self {
             Self::EmptyRepositoryPath => write!(f, "repository path must not be empty"),
             Self::EmptySubcommand => write!(f, "git subcommand must not be empty"),
+            Self::InvalidSubcommand => {
+                write!(
+                    f,
+                    "git subcommand must start with an ASCII lowercase letter and contain only [a-z0-9-]"
+                )
+            }
             Self::InteriorNulByte { argument_index } => {
-                write!(f, "argument at index {argument_index} contains a NUL byte")
+                write!(
+                    f,
+                    "path or argument at index {argument_index} contains a NUL byte"
+                )
             }
         }
     }
@@ -75,7 +88,7 @@ impl std::error::Error for CommandSpecError {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitCommandSpec {
     repository_path: PathBuf,
-    subcommand: OsString,
+    subcommand: String,
     args: Vec<OsString>,
     safety_class: OperationSafetyClass,
 }
@@ -84,11 +97,12 @@ impl GitCommandSpec {
     /// Validates and constructs a shell-free command specification.
     ///
     /// # Errors
-    /// Returns [`CommandSpecError`] if the repository path or subcommand is empty,
+    /// Returns [`CommandSpecError`] if the repository path is empty or contains NUL,
+    /// if `subcommand` is empty or not a canonical `[a-z][a-z0-9-]*` Git subcommand,
     /// or if any argument contains an interior NUL byte.
     pub fn new<I, S>(
         repository_path: PathBuf,
-        subcommand: impl AsRef<OsStr>,
+        subcommand: &str,
         args: I,
         safety_class: OperationSafetyClass,
     ) -> Result<Self, CommandSpecError>
@@ -99,13 +113,15 @@ impl GitCommandSpec {
         if repository_path.as_os_str().is_empty() {
             return Err(CommandSpecError::EmptyRepositoryPath);
         }
+        if contains_nul(repository_path.as_os_str()) {
+            return Err(CommandSpecError::InteriorNulByte { argument_index: 0 });
+        }
 
-        let subcommand_os = subcommand.as_ref().to_os_string();
-        if subcommand_os.is_empty() {
+        if subcommand.is_empty() {
             return Err(CommandSpecError::EmptySubcommand);
         }
-        if contains_nul(&subcommand_os) {
-            return Err(CommandSpecError::InteriorNulByte { argument_index: 0 });
+        if !is_valid_git_subcommand(subcommand) {
+            return Err(CommandSpecError::InvalidSubcommand);
         }
 
         let mut validated_args = Vec::new();
@@ -121,7 +137,7 @@ impl GitCommandSpec {
 
         Ok(Self {
             repository_path,
-            subcommand: subcommand_os,
+            subcommand: String::from(subcommand),
             args: validated_args,
             safety_class,
         })
@@ -129,13 +145,13 @@ impl GitCommandSpec {
 
     /// Target repository path (supports non-UTF-8 paths).
     #[must_use]
-    pub fn repository_path(&self) -> &PathBuf {
+    pub fn repository_path(&self) -> &Path {
         &self.repository_path
     }
 
-    /// Git subcommand name (for example, `"status"`).
+    /// Validated canonical Git subcommand name (for example, `"status"` or `"rev-parse"`).
     #[must_use]
-    pub fn subcommand(&self) -> &OsStr {
+    pub fn subcommand(&self) -> &str {
         &self.subcommand
     }
 
@@ -152,6 +168,17 @@ impl GitCommandSpec {
     }
 }
 
+fn is_valid_git_subcommand(subcommand: &str) -> bool {
+    let mut bytes = subcommand.bytes();
+    let Some(first) = bytes.next() else {
+        return false;
+    };
+    if !first.is_ascii_lowercase() {
+        return false;
+    }
+    bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
 fn contains_nul(value: &OsStr) -> bool {
     value.as_encoded_bytes().contains(&0)
 }
@@ -164,20 +191,39 @@ mod tests {
     fn accepts_discrete_arguments_without_shell_interpretation() {
         let spec = GitCommandSpec::new(
             PathBuf::from("/tmp/example-repo"),
-            "status",
-            [
-                "--porcelain=v2",
-                "--untracked-files=all",
-                "--",
-                "; rm -rf /",
-            ],
+            "rev-parse",
+            ["--verify", "--end-of-options", "HEAD", "--", "; rm -rf /"],
             OperationSafetyClass::ReadOnly,
         );
         assert!(spec.is_ok());
         if let Ok(spec) = spec {
-            assert_eq!(spec.subcommand(), OsStr::new("status"));
-            assert_eq!(spec.args().len(), 4);
+            assert_eq!(spec.subcommand(), "rev-parse");
+            assert_eq!(spec.args().len(), 5);
             assert_eq!(spec.safety_class(), OperationSafetyClass::ReadOnly);
+        }
+    }
+
+    #[test]
+    fn rejects_leading_dash_option_injection_and_malformed_subcommands() {
+        for malicious in [
+            "-c",
+            "--upload-pack=evil",
+            "--exec-path=/tmp",
+            "status;id",
+            "../git",
+            "Status",
+            "status --short",
+        ] {
+            assert_eq!(
+                GitCommandSpec::new(
+                    PathBuf::from("/tmp/repo"),
+                    malicious,
+                    Vec::<OsString>::new(),
+                    OperationSafetyClass::ReadOnly,
+                ),
+                Err(CommandSpecError::InvalidSubcommand),
+                "expected subcommand '{malicious}' to be rejected"
+            );
         }
     }
 
@@ -191,6 +237,16 @@ mod tests {
                 OperationSafetyClass::ReadOnly,
             ),
             Err(CommandSpecError::EmptyRepositoryPath)
+        );
+
+        assert_eq!(
+            GitCommandSpec::new(
+                PathBuf::from("/tmp/bad\0repo"),
+                "status",
+                Vec::<OsString>::new(),
+                OperationSafetyClass::ReadOnly,
+            ),
+            Err(CommandSpecError::InteriorNulByte { argument_index: 0 })
         );
 
         assert_eq!(
@@ -231,7 +287,7 @@ mod tests {
         );
         assert!(spec.is_ok());
         if let Ok(spec) = spec {
-            assert_eq!(spec.repository_path(), &raw_path);
+            assert_eq!(spec.repository_path(), raw_path.as_path());
             assert_eq!(spec.args()[1], raw_file);
         }
     }
