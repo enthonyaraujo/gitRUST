@@ -4,9 +4,10 @@ This guide documents toolchain requirements, operating-system dependencies, comp
 
 ---
 
-## 1. Toolchain Requirements
+## 1. Toolchain Requirements and Update Policy
 
-- **Rust Compiler & Cargo:** Minimum Supported Rust Version (MSRV) is **`1.95.0`** (Rust 2024 Edition, workspace resolver `3`). The repository includes [`rust-toolchain.toml`](../rust-toolchain.toml) tracking `stable` with `rustfmt` and `clippy`.
+- **Rust Compiler & Cargo:** Validated Minimum Supported Rust Version (MSRV) is **`1.97.1`** (`[workspace.package] rust-version = "1.97.1"`, Rust 2024 Edition, workspace resolver `3`). While the upstream crate floor (`egui` / `eframe` `0.37.0`) declares `1.95.0`, `gitRUST` only declares an MSRV that has been compiled and tested in local/CI validation (`1.97.1` MSRV job + `stable` `1.99.x`).
+- **Toolchain Update Policy:** [`rust-toolchain.toml`](../rust-toolchain.toml) tracks the `stable` channel for routine development while CI enforces both `stable` and the pinned `rust-version` (`1.97.1`). Raising `rust-version` requires updating `Cargo.toml`, the `msrv` job in `.github/workflows/ci.yml`, and verifying `--locked` builds.
 - **Git:** `git >= 2.38` recommended on host systems (required starting in Stage 02 for repository operations).
 
 Verify your toolchain:
@@ -86,16 +87,16 @@ Run from the workspace root:
 cargo fmt --all -- --check
 
 # 2. Type-check all workspace crates, binaries, tests, and examples
-cargo check --workspace --all-targets
+cargo check --locked --workspace --all-targets
 
 # 3. Lint all crates and targets treating warnings as errors
-cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --locked --workspace --all-targets -- -D warnings
 
 # 4. Execute unit and integration tests across the workspace
-cargo test --workspace
+cargo test --locked --workspace
 
 # 5. Build the optimized release executable (`target/release/gitrust` or `gitrust.exe`)
-cargo build --workspace --release
+cargo build --locked --workspace --release
 ```
 
 ---
@@ -103,8 +104,11 @@ cargo build --workspace --release
 ## 4. Running the Desktop Application
 
 ```bash
-# Run release build
+# Run release build (uses Wayland natively when WAYLAND_DISPLAY is active)
 ./target/release/gitrust
+
+# Force X11 / XWayland on a dual Wayland+X11 Linux session (winit 0.29+ honors WAYLAND_DISPLAY / DISPLAY)
+env -u WAYLAND_DISPLAY ./target/release/gitrust
 
 # Display CLI version or help
 ./target/release/gitrust --version
@@ -116,9 +120,11 @@ cargo build --workspace --release
 
 ### Runtime Display and GPU Environment Variables
 
+> **Note on `winit` `0.30`:** Upstream `winit` removed the legacy `WINIT_UNIX_BACKEND` variable in `v0.29`. On Linux, protocol selection follows standard `WAYLAND_DISPLAY` and `DISPLAY` variables, and `gitRUST` verifies the active protocol directly from the OS `RawDisplayHandle`.
+
 | Variable | Values | Purpose |
 | --- | --- | --- |
-| `WINIT_UNIX_BACKEND` | `wayland` \| `x11` | Forces a specific windowing backend on Linux when testing XWayland/X11 vs. native Wayland. |
-| `WGPU_POWER_PREFERENCE` | `low` \| `high` | Overrides default `LowPower` GPU selection (e.g., to test discrete NVIDIA/AMD GPU vs. integrated GPU). |
-| `WGPU_BACKEND` | `vulkan` \| `dx12` \| `metal` \| `gl` | Restricts `wgpu` backend selection for diagnostics or driver troubleshooting. |
-| `WGPU_ADAPTER_NAME` | Substring match | Selects a specific GPU adapter by name (e.g., `Intel`, `NVIDIA`, `llvmpipe`). |
+| `WAYLAND_DISPLAY` / `DISPLAY` | Socket / X11 display | Standard Unix display selection (`env -u WAYLAND_DISPLAY` selects X11/XWayland when `DISPLAY` is set). |
+| `WGPU_POWER_PREF` | `low` \| `high` \| `none` | Overrides default `LowPower` GPU selection (e.g., `WGPU_POWER_PREF=high` selects a discrete NVIDIA/AMD GPU). |
+| `WGPU_BACKEND` | `vulkan` \| `dx12` \| `metal` \| `gl` | Restricts `wgpu` backend selection (for example, `WGPU_BACKEND=gl` tests the built-in OpenGL ES path). |
+| `WGPU_ADAPTER_NAME` | Substring match | Filters adapter selection by substring when multiple GPUs are exposed. |

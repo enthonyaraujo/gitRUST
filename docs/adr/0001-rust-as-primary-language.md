@@ -34,7 +34,7 @@ Many existing desktop Git clients rely on Electron/WebView stacks (high idle RAM
 
 ## Decision
 
-Develop `gitRUST` **entirely in Rust** (Edition 2024, MSRV `1.95`), prohibiting web stacks (Electron, Tauri, HTML/CSS/JS, WebView) and enforcing `unsafe_code = "forbid"` across all workspace crates.
+Develop `gitRUST` **entirely in Rust** (Edition 2024, validated MSRV `1.97.1` above upstream crate floor `1.95`), prohibiting web stacks (Electron, Tauri, HTML/CSS/JS, WebView) and enforcing `unsafe_code = "forbid"` across all workspace crates.
 
 ## Consequences
 

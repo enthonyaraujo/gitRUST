@@ -61,7 +61,7 @@ gitRUST/
 
 ### Prerequisites
 
-- **Rust:** Stable toolchain (`rustc >= 1.95.0`) with `rustfmt` and `clippy`.
+- **Rust:** Stable toolchain (`rustc >= 1.97.1` validated MSRV; upstream dependency floor `1.95.0`) with `rustfmt` and `clippy`.
 - **Git:** System `git` installation (required from Stage 02 onward for repository operations).
 - **Platform Libraries:**
   - **Linux:** Wayland and/or X11 client libraries, `libxkbcommon`, `fontconfig`, and a Vulkan (recommended) or OpenGL ES driver.
@@ -98,6 +98,7 @@ cargo run -p gitrust-app --release
 - [`docs/adr/README.md`](docs/adr/README.md) — Architecture Decision Records (`ADR-0001` to `ADR-0005`).
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — Contribution guidelines and quality gates.
 - [`SECURITY.md`](SECURITY.md) — Vulnerability reporting and disclosure policy.
+- [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) — Third-party dependency elections and embedded font attributions.
 
 ---
 

@@ -21,16 +21,16 @@ All workspace crates form a strict **Directed Acyclic Graph (DAG)**. Circular de
 flowchart TD
     app["gitrust-app (binary: gitrust)"]
     ui["gitrust-ui (egui views & theme)"]
-    git["gitrust-git (Git engine boundary)"]
-    storage["gitrust-storage (local config & keychain policy)"]
-    providers["gitrust-providers (GitHub/GitLab boundary)"]
+    git["gitrust-git (Git engine boundary — Stage 02)"]
+    storage["gitrust-storage (local config & keychain policy — Stage 03)"]
+    providers["gitrust-providers (GitHub/GitLab boundary — Stage 08)"]
     core["gitrust-core (pure state, models & events)"]
 
     app --> ui
-    app --> git
-    app --> storage
-    app --> providers
     app --> core
+    app -.->|"dev-dependencies (Stage 00 integration tests)"| git
+    app -.->|"dev-dependencies (Stage 00 integration tests)"| storage
+    app -.->|"dev-dependencies (Stage 00 integration tests)"| providers
     ui --> core
     git --> core
     storage --> core
@@ -62,7 +62,8 @@ Per Stage 00 engineering guidelines, two intentional refinements were made relat
 
 - **Windowing:** `eframe` delegates native OS window management to `winit`, supporting Wayland (`libwayland-client`) and X11 (`x11` / `xcb`) on Linux, Win32 on Windows, and AppKit on macOS.
 - **Graphics Backend (`wgpu`):** Selected as the primary backend (`Vulkan` on Linux/Windows, `DirectX 12` on Windows, `Metal` on macOS, with `OpenGL ES` fallback inside `wgpu`).
-- **Hybrid GPU Power Policy:** `WgpuSetupCreateNew` defaults to `wgpu::PowerPreference::LowPower` (while honoring `WGPU_POWER_PREFERENCE`), preventing a desktop productivity tool from unnecessarily waking power-hungry discrete GPUs on Optimus/hybrid laptops while still supporting dedicated GPUs seamlessly.
+- **Hybrid GPU Power Policy:** `WgpuSetupCreateNew` defaults to `wgpu::PowerPreference::LowPower` (while honoring `WGPU_POWER_PREF=high|low|none`), preventing a desktop productivity tool from unnecessarily selecting power-hungry discrete GPUs on Optimus/hybrid laptops while still supporting dedicated GPUs seamlessly.
+- **Verified Session Diagnostics:** Active windowing protocol (`Wayland`, `X11`, `Win32`, `AppKit`) is verified directly from the runtime `RawDisplayHandle` rather than inferred from environment variables.
 - **Event-Driven Repaint:** Views render in response to OS/input events (`ControlFlow::Wait`) and never call `Context::request_repaint()` unconditionally, keeping idle CPU consumption near `0%`.
 
 ---

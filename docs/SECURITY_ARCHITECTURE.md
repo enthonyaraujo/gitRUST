@@ -64,7 +64,7 @@ flowchart LR
 **Threat:** Crafted branch names, file paths (e.g., `-oProxyCommand=...`, `--upload-pack=...`), or remote URLs inject unintended flags into `git` or SSH subprocesses.
 
 **Controls:**
-- **Implemented in Stage 00 (`gitrust-git`):** `GitCommandSpec` enforces discrete `OsString` argument arrays and rejects embedded NUL bytes; shell invocation (`sh -c`, `cmd /C`) is architecturally absent.
+- **Implemented in Stage 00 (`gitrust-git`):** `GitCommandSpec` enforces discrete `OsString` argument arrays, validates canonical `[a-z][a-z0-9-]*` Git subcommand names (rejecting leading-dash option injection such as `-c` or `--upload-pack`), and rejects embedded NUL bytes in paths and arguments; shell invocation (`sh -c`, `cmd /C`) is architecturally absent.
 - **Required in Stage 02+:** Always pass `--end-of-options` and `--` to separate flags from revisions and file paths; validate remote URL schemes (`https://`, `ssh://`, standard SCP-like `git@host:path`), rejecting dangerous `ext::` transport helpers by default (`GIT_ALLOW_PROTOCOL=https:ssh:file`).
 
 ### 3.3 Information Disclosure (Credentials & Logs)
@@ -72,7 +72,7 @@ flowchart LR
 **Threat:** Personal access tokens, passwords, SSH passphrases, or private URLs with embedded credentials leak into config files, crash reports, or terminal logs.
 
 **Controls:**
-- **Implemented in Stage 00 (`gitrust-storage`, `gitrust-app`):** `StorageSecurityBaseline` forbids plaintext credential persistence; `tracing` logs record only non-sensitive metadata (version, OS, graphics adapter, viewport metrics) and never dump environment variables or raw command arguments containing URLs/secrets.
+- **Declarative Baseline Defined in Stage 00 (`gitrust-storage`, `gitrust-providers`), Runtime Enforcement Planned for Stages 03/06/08:** `StorageSecurityBaseline` and `TlsVerificationPolicy` codify the prohibition on plaintext credential files, default telemetry, and TLS verification bypasses as compile-time constants (`no HTTP/storage I/O exists in Stage 00`). `tracing` logs in `gitrust-app` record only non-sensitive metadata (version, OS, graphics adapter, viewport metrics) and never dump environment variables.
 - **Required in Stage 03 / Stage 06 / Stage 08:** Delegate Git transport credentials to the user's configured Git credential helper / SSH agent, and store any provider API tokens exclusively in the OS keychain (`Secret Service` on Linux, `Windows Credential Manager`, `macOS Keychain`). Strip `userinfo` (`https://user:token@host`) before logging or displaying remote URLs.
 
 ### 3.4 Spoofing & Man-in-the-Middle (Transport Security)
