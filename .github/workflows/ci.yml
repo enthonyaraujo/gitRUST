@@ -4,7 +4,9 @@ on:
   push:
     branches:
       - main
+      - "feat/**"
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -19,12 +21,12 @@ env:
 
 jobs:
   lint:
-    name: Format & Clippy (Linux)
+    name: Format & Clippy (Linux Stable)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
@@ -47,18 +49,61 @@ jobs:
             libfontconfig1-dev
 
       - name: Install Rust stable toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
         with:
+          toolchain: stable
           components: rustfmt, clippy
 
       - name: Cache Cargo artifacts
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Check formatting
         run: cargo fmt --all -- --check
 
       - name: Run Clippy across workspace and all targets
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
+  msrv:
+    name: Validate MSRV (1.97.1)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install Linux desktop development headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libx11-dev \
+            libxcb1-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libgl1-mesa-dev \
+            libegl1-mesa-dev \
+            libvulkan-dev \
+            libfontconfig1-dev
+
+      - name: Install Rust MSRV toolchain (1.97.1)
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc
+        with:
+          toolchain: "1.97.1"
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+
+      - name: Check workspace targets on MSRV
+        run: cargo check --locked --workspace --all-targets
+
+      - name: Run workspace tests on MSRV
+        run: cargo test --locked --workspace
 
   build-and-test:
     name: Check, Test & Build (${{ matrix.os }})
@@ -73,7 +118,7 @@ jobs:
           - macos-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
@@ -97,19 +142,21 @@ jobs:
             libfontconfig1-dev
 
       - name: Install Rust stable toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc
+        with:
+          toolchain: stable
 
       - name: Cache Cargo artifacts
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Check workspace targets
-        run: cargo check --workspace --all-targets --locked
+        run: cargo check --locked --workspace --all-targets
 
       - name: Run workspace unit and integration tests
-        run: cargo test --workspace --locked
+        run: cargo test --locked --workspace
 
       - name: Build workspace release binary
-        run: cargo build --workspace --release --locked
+        run: cargo build --locked --workspace --release
 
   supply-chain:
     name: Dependency & License Audit
@@ -117,14 +164,16 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
       - name: Install Rust stable toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc
+        with:
+          toolchain: stable
 
       - name: Run cargo-deny (licenses, advisories, bans, sources)
-        uses: EmbarkStudios/cargo-deny-action@v2
+        uses: EmbarkStudios/cargo-deny-action@81891abc19297b21343b15ef67dc61e4aea74fda # v2
         with:
           arguments: --locked
