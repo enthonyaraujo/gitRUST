@@ -4,8 +4,12 @@ on:
   push:
     branches:
       - main
+      - develop
       - "feat/**"
   pull_request:
+    branches:
+      - main
+      - develop
   workflow_dispatch:
 
 permissions:
@@ -13,7 +17,7 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/develop' }}
 
 env:
   CARGO_TERM_COLOR: always
