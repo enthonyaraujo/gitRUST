@@ -6,6 +6,8 @@
 //! placeholder repository trees, or continuous animations so that:
 //! 1. Only genuinely implemented capabilities are presented.
 //! 2. The event loop remains idle (`0%` CPU target) when there is no user input.
+//! 3. Static diagnostic labels are formatted once at initialization rather than
+//!    allocating fresh heap strings on every UI pass.
 //!
 //! The definitive visual identity and component system will be built in
 //! **Stage 01 (Design System)**.
@@ -26,118 +28,208 @@ pub fn configure_provisional_visuals(ctx: &Context) {
     ctx.set_visuals(visuals);
 }
 
-/// Renders the Stage 00 Foundation view inside the root `Ui` and returns any [`AppEvent`]s.
-///
-/// This function never calls `Context::request_repaint`, preserving reactive,
-/// event-driven rendering when the desktop window is idle.
-pub fn render_foundation_view(ui: &mut Ui, state: &AppState) -> Vec<AppEvent> {
-    let mut events = Vec::new();
-
-    let rect = ui.ctx().input(egui::InputState::content_rect);
-    let observed_size = [rect.width(), rect.height()];
-    if (observed_size[0] - state.viewport_size[0]).abs() > 0.5
-        || (observed_size[1] - state.viewport_size[1]).abs() > 0.5
-    {
-        events.push(AppEvent::ViewportResized {
-            width: observed_size[0],
-            height: observed_size[1],
-        });
-    }
-
-    render_top_bar(ui, state, &mut events);
-    render_status_footer(ui, state);
-
-    egui::CentralPanel::default()
-        .frame(
-            Frame::new()
-                .fill(Color32::from_rgb(18, 20, 24))
-                .inner_margin(Margin::symmetric(24, 20)),
-        )
-        .show(ui, |ui| {
-            ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    render_intro_card(ui);
-                    ui.add_space(16.0);
-                    render_runtime_card(ui, state);
-                    ui.add_space(16.0);
-                    render_workspace_card(ui);
-                });
-        });
-
-    events
+/// Stack-allocated batch of up to two [`AppEvent`]s emitted during a single UI pass.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct FrameEvents {
+    resize: Option<AppEvent>,
+    action: Option<AppEvent>,
 }
 
-fn render_top_bar(ui: &mut Ui, state: &AppState, events: &mut Vec<AppEvent>) {
-    Panel::top("gitrust_top_bar")
-        .frame(
-            Frame::new()
-                .fill(Color32::from_rgb(23, 26, 32))
-                .inner_margin(Margin::symmetric(20, 14))
-                .stroke(Stroke::new(1.0, Color32::from_rgb(40, 46, 56))),
-        )
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(state.metadata.name)
-                        .size(20.0)
-                        .strong()
-                        .color(Color32::from_rgb(240, 243, 249)),
-                );
-                ui.add_space(6.0);
-                badge(
-                    ui,
-                    &format!("v{}", state.metadata.version),
-                    Color32::from_rgb(35, 52, 78),
-                    Color32::from_rgb(168, 205, 255),
-                );
-                badge(
-                    ui,
-                    &format!(
-                        "Stage {} — {}",
-                        state.metadata.stage_id, state.metadata.stage_name
-                    ),
-                    Color32::from_rgb(31, 61, 47),
-                    Color32::from_rgb(154, 230, 180),
-                );
+impl FrameEvents {
+    /// Iterates over emitted events in deterministic order without heap allocation.
+    pub fn into_iter_events(self) -> impl Iterator<Item = AppEvent> {
+        self.resize.into_iter().chain(self.action)
+    }
+}
 
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui.button("Close Window").clicked() {
-                        events.push(AppEvent::RequestClose);
-                    }
-                    ui.add_space(8.0);
+/// Cached presentation state for the Stage 00 provisional foundation view.
+///
+/// Pre-computes static labels once on startup and recomputes the status footer
+/// only when the viewport dimensions actually change.
+#[derive(Debug, Clone)]
+pub struct FoundationView {
+    version_badge: String,
+    stage_badge: String,
+    license_label: String,
+    os_label: String,
+    backend_label: String,
+    adapter_label: String,
+    cached_viewport_size: [f32; 2],
+    footer_label: String,
+}
+
+impl FoundationView {
+    /// Initializes cached display labels from [`AppState`].
+    #[must_use]
+    pub fn new(state: &AppState) -> Self {
+        let footer_label = format_footer_label(state.metadata.package_name, state.viewport_size);
+        Self {
+            version_badge: format!("v{}", state.metadata.version),
+            stage_badge: format!(
+                "Stage {} — {}",
+                state.metadata.stage_id, state.metadata.stage_name
+            ),
+            license_label: format!("License: {}", state.metadata.license),
+            os_label: format!(
+                "{} ({})",
+                state.host.operating_system, state.host.architecture
+            ),
+            backend_label: format!(
+                "{} ({})",
+                state.graphics.renderer, state.graphics.backend_api
+            ),
+            adapter_label: format!(
+                "{} [{}]",
+                state.graphics.adapter_name, state.graphics.device_type
+            ),
+            cached_viewport_size: state.viewport_size,
+            footer_label,
+        }
+    }
+
+    /// Renders the Stage 00 Foundation view inside the root `Ui` without scheduling
+    /// continuous repaints or performing unnecessary per-frame string allocations.
+    pub fn show(&mut self, ui: &mut Ui, state: &AppState) -> FrameEvents {
+        let mut events = FrameEvents::default();
+
+        let rect = ui.ctx().input(egui::InputState::content_rect);
+        let observed_size = [rect.width(), rect.height()];
+        if (observed_size[0] - state.viewport_size[0]).abs() > 0.5
+            || (observed_size[1] - state.viewport_size[1]).abs() > 0.5
+        {
+            events.resize = Some(AppEvent::ViewportResized {
+                width: observed_size[0],
+                height: observed_size[1],
+            });
+        }
+
+        if (state.viewport_size[0] - self.cached_viewport_size[0]).abs() > 0.5
+            || (state.viewport_size[1] - self.cached_viewport_size[1]).abs() > 0.5
+        {
+            self.cached_viewport_size = state.viewport_size;
+            self.footer_label =
+                format_footer_label(state.metadata.package_name, state.viewport_size);
+        }
+
+        self.render_top_bar(ui, state, &mut events);
+        self.render_status_footer(ui);
+
+        egui::CentralPanel::default()
+            .frame(
+                Frame::new()
+                    .fill(Color32::from_rgb(18, 20, 24))
+                    .inner_margin(Margin::symmetric(24, 18)),
+            )
+            .show(ui, |ui| {
+                ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        render_intro_card(ui);
+                        ui.add_space(14.0);
+                        self.render_runtime_card(ui, state);
+                        ui.add_space(14.0);
+                        render_workspace_card(ui);
+                    });
+            });
+
+        events
+    }
+
+    fn render_top_bar(&self, ui: &mut Ui, state: &AppState, events: &mut FrameEvents) {
+        Panel::top("gitrust_top_bar")
+            .frame(
+                Frame::new()
+                    .fill(Color32::from_rgb(23, 26, 32))
+                    .inner_margin(Margin::symmetric(20, 12))
+                    .stroke(Stroke::new(1.0, Color32::from_rgb(40, 46, 56))),
+            )
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
                     ui.label(
-                        RichText::new(format!("License: {}", state.metadata.license))
-                            .size(12.5)
-                            .color(Color32::from_rgb(156, 164, 178)),
+                        RichText::new(state.metadata.name)
+                            .size(20.0)
+                            .strong()
+                            .color(Color32::from_rgb(240, 243, 249)),
+                    );
+                    ui.add_space(6.0);
+                    badge(
+                        ui,
+                        &self.version_badge,
+                        Color32::from_rgb(35, 52, 78),
+                        Color32::from_rgb(168, 205, 255),
+                    );
+                    badge(
+                        ui,
+                        &self.stage_badge,
+                        Color32::from_rgb(31, 61, 47),
+                        Color32::from_rgb(154, 230, 180),
+                    );
+
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui.button("Close Window").clicked() {
+                            events.action = Some(AppEvent::RequestClose);
+                        }
+                        ui.add_space(8.0);
+                        ui.label(
+                            RichText::new(&self.license_label)
+                                .size(12.5)
+                                .color(Color32::from_rgb(156, 164, 178)),
+                        );
+                    });
+                });
+            });
+    }
+
+    fn render_status_footer(&self, ui: &mut Ui) {
+        Panel::bottom("gitrust_status_footer")
+            .frame(
+                Frame::new()
+                    .fill(Color32::from_rgb(20, 23, 28))
+                    .inner_margin(Margin::symmetric(20, 8))
+                    .stroke(Stroke::new(1.0, Color32::from_rgb(36, 41, 50))),
+            )
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        RichText::new(&self.footer_label)
+                            .size(12.0)
+                            .color(Color32::from_rgb(142, 151, 166)),
                     );
                 });
             });
+    }
+
+    fn render_runtime_card(&self, ui: &mut Ui, state: &AppState) {
+        section_card(ui, "Verified Runtime Environment", |ui| {
+            egui::Grid::new("gitrust_runtime_grid")
+                .num_columns(2)
+                .spacing([24.0, 6.0])
+                .striped(false)
+                .show(ui, |ui| {
+                    kv_row(ui, "Operating System", &self.os_label);
+                    kv_row(
+                        ui,
+                        "Windowing Session",
+                        state.host.session_protocol.as_str(),
+                    );
+                    kv_row(ui, "Graphics Backend", &self.backend_label);
+                    kv_row(ui, "GPU Adapter", &self.adapter_label);
+                    kv_row(ui, "Graphics Driver", &state.graphics.driver_description);
+                    kv_row(
+                        ui,
+                        "Web / WebView Stack",
+                        "None (100% native Rust + egui/eframe)",
+                    );
+                });
         });
+    }
 }
 
-fn render_status_footer(ui: &mut Ui, state: &AppState) {
-    Panel::bottom("gitrust_status_footer")
-        .frame(
-            Frame::new()
-                .fill(Color32::from_rgb(20, 23, 28))
-                .inner_margin(Margin::symmetric(20, 8))
-                .stroke(Stroke::new(1.0, Color32::from_rgb(36, 41, 50))),
-        )
-        .show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(
-                    RichText::new(format!(
-                        "Package: {}  •  Viewport: {:.0}×{:.0} pt  •  Rendering: Event-driven (idle repaint off)  •  Telemetry: Disabled",
-                        state.metadata.package_name,
-                        state.viewport_size[0],
-                        state.viewport_size[1],
-                    ))
-                    .size(12.0)
-                    .color(Color32::from_rgb(142, 151, 166)),
-                );
-            });
-        });
+fn format_footer_label(package_name: &str, viewport_size: [f32; 2]) -> String {
+    format!(
+        "Package: {package_name}  •  Viewport: {:.0}×{:.0} pt  •  Rendering: Event-driven (idle repaint off)  •  Telemetry: Disabled",
+        viewport_size[0], viewport_size[1],
+    )
 }
 
 fn render_intro_card(ui: &mut Ui) {
@@ -160,53 +252,11 @@ fn render_intro_card(ui: &mut Ui) {
     });
 }
 
-fn render_runtime_card(ui: &mut Ui, state: &AppState) {
-    section_card(ui, "Verified Runtime Environment", |ui| {
-        egui::Grid::new("gitrust_runtime_grid")
-            .num_columns(2)
-            .spacing([24.0, 8.0])
-            .striped(false)
-            .show(ui, |ui| {
-                kv_row(
-                    ui,
-                    "Operating System",
-                    &format!(
-                        "{} ({})",
-                        state.host.operating_system, state.host.architecture
-                    ),
-                );
-                kv_row(ui, "Windowing Session", &state.host.session_protocol);
-                kv_row(
-                    ui,
-                    "Graphics Backend",
-                    &format!(
-                        "{} ({})",
-                        state.graphics.renderer, state.graphics.backend_api
-                    ),
-                );
-                kv_row(
-                    ui,
-                    "GPU Adapter",
-                    &format!(
-                        "{} [{}]",
-                        state.graphics.adapter_name, state.graphics.device_type
-                    ),
-                );
-                kv_row(ui, "Graphics Driver", &state.graphics.driver_description);
-                kv_row(
-                    ui,
-                    "Web / WebView Stack",
-                    "None (100% native Rust + egui/eframe)",
-                );
-            });
-    });
-}
-
 fn render_workspace_card(ui: &mut Ui) {
     section_card(ui, "Cargo Workspace Architecture", |ui| {
         egui::Grid::new("gitrust_workspace_grid")
             .num_columns(3)
-            .spacing([18.0, 8.0])
+            .spacing([18.0, 6.0])
             .striped(true)
             .show(ui, |ui| {
                 ui.label(
@@ -255,17 +305,17 @@ fn section_card(ui: &mut Ui, title: &str, add_contents: impl FnOnce(&mut Ui)) {
     Frame::new()
         .fill(Color32::from_rgb(24, 27, 34))
         .corner_radius(CornerRadius::same(8))
-        .inner_margin(Margin::same(16))
+        .inner_margin(Margin::same(14))
         .stroke(Stroke::new(1.0, Color32::from_rgb(40, 46, 58)))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.label(
                 RichText::new(title)
-                    .size(15.5)
+                    .size(15.0)
                     .strong()
                     .color(Color32::from_rgb(235, 239, 247)),
             );
-            ui.add_space(10.0);
+            ui.add_space(8.0);
             add_contents(ui);
         });
 }
@@ -292,6 +342,7 @@ mod tests {
 
     use gitrust_core::{
         AppMetadata, DEFAULT_WINDOW_SIZE, GraphicsDiagnostics, HostDiagnostics, MIN_WINDOW_SIZE,
+        WindowSessionProtocol,
     };
 
     use super::*;
@@ -303,9 +354,10 @@ mod tests {
 
         let mut state = AppState::new(
             AppMetadata::new("0.1.0-alpha.0"),
-            HostDiagnostics::detect(true, false, None),
+            HostDiagnostics::from_protocol(WindowSessionProtocol::Wayland),
             GraphicsDiagnostics::default(),
         );
+        let mut view = FoundationView::new(&state);
 
         let raw_input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -321,7 +373,7 @@ mod tests {
             let mut step_input = raw_input.clone();
             step_input.time = Some(f64::from(step) * (1.0 / 60.0));
             let mut warmup_output = ctx.run_ui(step_input, |ui| {
-                for ev in render_foundation_view(ui, &state) {
+                for ev in view.show(ui, &state).into_iter_events() {
                     state.apply(ev);
                 }
             });
@@ -333,7 +385,7 @@ mod tests {
         let mut idle_input = raw_input;
         idle_input.time = Some(20.0 * (1.0 / 60.0));
         let mut idle_output = ctx.run_ui(idle_input, |ui| {
-            for ev in render_foundation_view(ui, &state) {
+            for ev in view.show(ui, &state).into_iter_events() {
                 state.apply(ev);
             }
         });
@@ -355,9 +407,10 @@ mod tests {
         let ctx = Context::default();
         let mut state = AppState::new(
             AppMetadata::new("0.1.0-alpha.0"),
-            HostDiagnostics::detect(false, true, Some("x11")),
+            HostDiagnostics::from_protocol(WindowSessionProtocol::X11),
             GraphicsDiagnostics::default(),
         );
+        let mut view = FoundationView::new(&state);
 
         let raw_input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -367,13 +420,19 @@ mod tests {
             ..Default::default()
         };
 
-        let mut output = ctx.run_ui(raw_input, |ui| {
-            for ev in render_foundation_view(ui, &state) {
+        let mut output = ctx.run_ui(raw_input.clone(), |ui| {
+            for ev in view.show(ui, &state).into_iter_events() {
                 state.apply(ev);
             }
         });
         output.textures_delta.clear();
 
+        let mut synced_output = ctx.run_ui(raw_input, |ui| {
+            let _ = view.show(ui, &state);
+        });
+        synced_output.textures_delta.clear();
+
         assert_eq!(state.viewport_size, MIN_WINDOW_SIZE);
+        assert!(view.footer_label.contains("640×400 pt"));
     }
 }

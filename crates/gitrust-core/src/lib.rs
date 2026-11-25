@@ -14,19 +14,23 @@ pub const PACKAGE_NAME: &str = "gitrust";
 /// SPDX license identifier for the project.
 pub const APP_LICENSE: &str = "MIT";
 
-/// Current development stage identifier and title.
+/// Current development stage identifier.
 pub const CURRENT_STAGE_ID: &str = "00";
 /// Current development stage name.
 pub const CURRENT_STAGE_NAME: &str = "Project Foundation";
 
 /// Default logical window dimensions `(width, height)` in points.
-pub const DEFAULT_WINDOW_SIZE: [f32; 2] = [960.0, 620.0];
+///
+/// Sized to fit comfortably within `1920×1080` displays running at `200%` `HiDPI`
+/// scaling (`960×540` logical desktop) without compositor clamping, as well as
+/// standard `100%`–`150%` desktop monitors.
+pub const DEFAULT_WINDOW_SIZE: [f32; 2] = [880.0, 500.0];
 
 /// Minimum logical window dimensions `(width, height)` in points.
-pub const MIN_WINDOW_SIZE: [f32; 2] = [640.0, 420.0];
+pub const MIN_WINDOW_SIZE: [f32; 2] = [640.0, 400.0];
 
 /// Build and identity metadata injected by the binary crate at startup.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AppMetadata {
     /// Official application name (`gitRUST`).
     pub name: &'static str,
@@ -90,46 +94,52 @@ impl Default for GraphicsDiagnostics {
     }
 }
 
-/// Host operating system and display session information.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Windowing session protocol verified directly from the OS display handle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowSessionProtocol {
+    /// Native Wayland display handle (`RawDisplayHandle::Wayland`).
+    Wayland,
+    /// X11 (`Xlib` or `XCB`) display handle, either native Xorg or `XWayland`.
+    X11,
+    /// Microsoft Windows `Win32` display handle.
+    Win32,
+    /// Apple macOS `AppKit` display handle.
+    AppKit,
+    /// Headless test context or unrecognized platform handle.
+    HeadlessOrUnknown,
+}
+
+impl WindowSessionProtocol {
+    /// Human-readable protocol name without heap allocation.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Wayland => "Wayland",
+            Self::X11 => "X11",
+            Self::Win32 => "Win32",
+            Self::AppKit => "AppKit",
+            Self::HeadlessOrUnknown => "Headless / Unattached",
+        }
+    }
+}
+
+/// Host operating system and verified display session information.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HostDiagnostics {
     /// Target operating system (`linux`, `windows`, `macos`, etc.).
     pub operating_system: &'static str,
     /// Target CPU architecture (`x86_64`, `aarch64`, etc.).
     pub architecture: &'static str,
-    /// Detected display session protocol on Unix systems, or native platform windowing.
-    pub session_protocol: String,
+    /// Active windowing protocol verified from the runtime display handle.
+    pub session_protocol: WindowSessionProtocol,
     /// Telemetry state (always disabled by default per project requirements).
     pub telemetry_enabled: bool,
 }
 
 impl HostDiagnostics {
-    /// Detects non-sensitive host diagnostics from compile-time constants and display hints.
+    /// Constructs host diagnostics from the runtime-verified [`WindowSessionProtocol`].
     #[must_use]
-    pub fn detect(
-        wayland_display_present: bool,
-        x11_display_present: bool,
-        forced_unix_backend: Option<&str>,
-    ) -> Self {
-        let session_protocol = if cfg!(target_os = "linux") {
-            match forced_unix_backend {
-                Some("x11") => String::from("X11 (forced via WINIT_UNIX_BACKEND)"),
-                Some("wayland") => String::from("Wayland (forced via WINIT_UNIX_BACKEND)"),
-                _ if wayland_display_present && x11_display_present => {
-                    String::from("Wayland (XWayland / X11 also available)")
-                }
-                _ if wayland_display_present => String::from("Wayland"),
-                _ if x11_display_present => String::from("X11"),
-                _ => String::from("Headless / Unknown Unix session"),
-            }
-        } else if cfg!(target_os = "windows") {
-            String::from("Win32")
-        } else if cfg!(target_os = "macos") {
-            String::from("AppKit / Cocoa")
-        } else {
-            String::from("Native OS Windowing")
-        };
-
+    pub const fn from_protocol(session_protocol: WindowSessionProtocol) -> Self {
         Self {
             operating_system: std::env::consts::OS,
             architecture: std::env::consts::ARCH,
@@ -215,7 +225,7 @@ pub enum AppEvent {
 pub struct AppState {
     /// Static build and stage metadata.
     pub metadata: AppMetadata,
-    /// Host OS and display session diagnostics.
+    /// Host OS and verified display session diagnostics.
     pub host: HostDiagnostics,
     /// Graphics adapter and backend diagnostics.
     pub graphics: GraphicsDiagnostics,
@@ -271,13 +281,22 @@ mod tests {
     }
 
     #[test]
+    fn host_diagnostics_reflect_verified_protocol_without_telemetry() {
+        let wayland = HostDiagnostics::from_protocol(WindowSessionProtocol::Wayland);
+        assert_eq!(wayland.session_protocol.as_str(), "Wayland");
+        assert!(!wayland.telemetry_enabled);
+
+        let x11 = HostDiagnostics::from_protocol(WindowSessionProtocol::X11);
+        assert_eq!(x11.session_protocol.as_str(), "X11");
+    }
+
+    #[test]
     fn state_transitions_update_viewport_and_close_flag() {
         let mut state = AppState::new(
             AppMetadata::new("0.1.0-alpha.0"),
-            HostDiagnostics::detect(true, true, None),
+            HostDiagnostics::from_protocol(WindowSessionProtocol::Wayland),
             GraphicsDiagnostics::default(),
         );
-        assert!(!state.host.telemetry_enabled);
         assert_eq!(state.viewport_size, DEFAULT_WINDOW_SIZE);
         assert!(!state.should_close);
 

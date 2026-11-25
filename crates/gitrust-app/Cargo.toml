@@ -16,12 +16,14 @@ path = "src/main.rs"
 eframe.workspace = true
 egui.workspace = true
 gitrust-core.workspace = true
-gitrust-git.workspace = true
-gitrust-providers.workspace = true
-gitrust-storage.workspace = true
 gitrust-ui.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+[dev-dependencies]
+gitrust-git.workspace = true
+gitrust-providers.workspace = true
+gitrust-storage.workspace = true
 
 [lints]
 workspace = true
