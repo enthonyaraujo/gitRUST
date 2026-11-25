@@ -19,11 +19,11 @@ publish = false
 
 [workspace.dependencies]
 # Internal workspace crates
-gitrust-core = { path = "crates/gitrust-core" }
-gitrust-git = { path = "crates/gitrust-git" }
-gitrust-ui = { path = "crates/gitrust-ui" }
-gitrust-storage = { path = "crates/gitrust-storage" }
-gitrust-providers = { path = "crates/gitrust-providers" }
+gitrust-core = { version = "0.1.0-alpha.0", path = "crates/gitrust-core" }
+gitrust-git = { version = "0.1.0-alpha.0", path = "crates/gitrust-git" }
+gitrust-ui = { version = "0.1.0-alpha.0", path = "crates/gitrust-ui" }
+gitrust-storage = { version = "0.1.0-alpha.0", path = "crates/gitrust-storage" }
+gitrust-providers = { version = "0.1.0-alpha.0", path = "crates/gitrust-providers" }
 
 # Native GUI framework (explicitly excluding web_screen_reader and web targets)
 egui = { version = "0.37.0", default-features = false, features = [
