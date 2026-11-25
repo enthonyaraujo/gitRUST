@@ -1,0 +1,15 @@
+[package]
+name = "gitrust-providers"
+description = "Remote Git hosting provider integration boundary for gitRUST (Stage 08 target)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+gitrust-core.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,59 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/gitrust-app",
+    "crates/gitrust-core",
+    "crates/gitrust-git",
+    "crates/gitrust-ui",
+    "crates/gitrust-storage",
+    "crates/gitrust-providers",
+]
+
+[workspace.package]
+version = "0.1.0-alpha.0"
+edition = "2024"
+rust-version = "1.97.1"
+license = "MIT"
+repository = "https://github.com/enthonyaraujo/gitRUST"
+publish = false
+
+[workspace.dependencies]
+# Internal workspace crates
+gitrust-core = { version = "0.1.0-alpha.0", path = "crates/gitrust-core" }
+gitrust-git = { version = "0.1.0-alpha.0", path = "crates/gitrust-git" }
+gitrust-ui = { version = "0.1.0-alpha.0", path = "crates/gitrust-ui" }
+gitrust-storage = { version = "0.1.0-alpha.0", path = "crates/gitrust-storage" }
+gitrust-providers = { version = "0.1.0-alpha.0", path = "crates/gitrust-providers" }
+
+# Native GUI framework (explicitly excluding web_screen_reader and web targets)
+egui = { version = "0.37.0", default-features = false, features = [
+    "default_fonts",
+] }
+eframe = { version = "0.37.0", default-features = false, features = [
+    "accesskit",
+    "clipboard",
+    "default_fonts",
+    "wayland",
+    "wgpu",
+    "x11",
+] }
+
+# Structured diagnostics (no sensitive payload logging; minimal feature footprint)
+tracing = { version = "0.1.44", default-features = false, features = ["std"] }
+tracing-subscriber = { version = "0.3.23", default-features = false, features = [
+    "fmt",
+    "std",
+] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+unwrap_used = "warn"
