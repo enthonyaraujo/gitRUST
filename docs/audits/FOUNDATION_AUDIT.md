@@ -179,10 +179,61 @@ All **High**, **Medium**, and **Low** defects confirmed within Stage 00 scope we
 
 ---
 
-## 5. Final Audit Verdict
+## 5. Stage 00.1 Audit Verdict (Historical Pre-CI Checkpoint)
 
 **Conditionally Approved to Proceed to Stage 01 (Design System)** upon maintainer review and authorization of local commits/push:
 
 - **Zero unresolved `Critical` or `High` issues.**
 - All confirmed `High`, `Medium`, and `Low` engineering issues within Stage 00 scope are fixed and revalidated locally with `--locked` builds on Rust `1.99.1` and MSRV `1.97.1`.
 - Remaining external gates—remote execution of `.github/workflows/ci.yml` on Linux/Windows/macOS runners and live `cargo-deny` / `cargo-audit` advisory database verification—will execute immediately upon maintainer-authorized push to GitHub (or locally if installation of `cargo-deny`/`cargo-audit` is authorized).
+
+---
+
+## 6. Stage 00.2 — CI Execution and Supply-Chain Verification
+
+- **Verification Date:** `2026-11-25`
+- **Branch:** `feat/project-foundation`
+- **Maintainer Authorization:** Commits and push exclusively to `feat/project-foundation` (no merge, no tag, no release, no global tool installation).
+
+### 6.1 Additional Finding Identified in Remote CI
+
+#### `FA-010` — `cargo-deny` `error[wildcard]` on Internal Workspace Path Dependencies
+
+- **Severity:** `Medium`
+- **Description:** During the first remote CI execution (Run [`45705819567`](https://github.com/enthonyaraujo/gitRUST/actions/runs/45705819567) at commit `b135faa`), 5 of 6 jobs passed (`Format & Clippy (Linux Stable)`, `Validate MSRV (1.97.1)`, `Check, Test & Build (ubuntu-latest)`, `Check, Test & Build (macos-latest)`, and `Check, Test & Build (windows-latest)`), while `Dependency & License Audit` failed with `advisories ok, bans FAILED, licenses ok, sources ok`.
+- **Objective Evidence:** `cargo-deny 0.22.1` reported `error[wildcard]` exclusively on the 5 internal workspace path entries in root `Cargo.toml` (`gitrust-core`, `gitrust-git`, `gitrust-ui`, `gitrust-storage`, `gitrust-providers`) because they declared `path = "crates/..."` without an explicit `version` field while `deny.toml` enforces `wildcards = "deny"`.
+- **Cause:** Omitting explicit `version = "0.1.0-alpha.0"` on internal workspace path entries in `[workspace.dependencies]`.
+- **Fix Applied:** Added `version = "0.1.0-alpha.0"` alongside `path = "crates/..."` for all 5 internal crates in root `Cargo.toml` (commit `d0b3232`), preserving `wildcards = "deny"` in `deny.toml` without weakening supply-chain rules or altering `Cargo.lock`.
+- **Revalidation Result:** Passed full local validation gate (`cargo fmt`, `cargo check --locked`, `cargo clippy --locked -- -D warnings`, `cargo test --locked`, `cargo +1.97.1 check/test --locked`, `cargo build --locked --release`) and remote CI Run [`45708393183`](https://github.com/enthonyaraujo/gitRUST/actions/runs/45708393183) with `6/6` green jobs and `advisories ok, bans ok, licenses ok, sources ok`.
+- **Final Status:** `Resolved`
+
+### 6.2 Remote GitHub Actions Matrix Results (Run `45708393183`, Commit `d0b3232`)
+
+| Job | Runner / Scope | Job ID | Status | Duration |
+| --- | --- | --- | --- | --- |
+| `Format & Clippy (Linux Stable)` | `ubuntu-latest` (`cargo fmt`, `cargo clippy --locked -- -D warnings`) | `139536162351` | `success` | `29s` |
+| `Validate MSRV (1.97.1)` | `ubuntu-latest` (`cargo check/test --locked` on Rust `1.97.1`) | `139536162159` | `success` | `59s` |
+| `Check, Test & Build (ubuntu-latest)` | `ubuntu-latest` (check, 14/14 tests, `--release` build) | `139536162129` | `success` | `1m 20s` |
+| `Check, Test & Build (macos-latest)` | `macos-latest` (check, 14/14 tests, `--release` build) | `139536162292` | `success` | `1m 05s` |
+| `Check, Test & Build (windows-latest)` | `windows-latest` (check, 14/14 tests, `--release` build) | `139536162314` | `success` | `2m 10s` |
+| `Dependency & License Audit` | `ubuntu-latest` (`cargo-deny 0.22.1 --locked check`) | `139536161909` | `success` | `56s` |
+
+### 6.3 Supply-Chain Audit (`cargo-deny 0.22.1`) Summary
+
+- **Advisories (`advisories ok`):** `0` known CVEs / RustSec security advisories, `0` yanked crates (`yanked = "deny"`), `0` unmaintained/unsound advisory errors across the locked dependency graph.
+- **Bans (`bans ok`):** `0` wildcard dependency errors (`wildcards = "deny"` enforced strictly). `21` informational `warning[duplicate]` notices from upstream transitive crates (`bitflags`, `block2`, `calloop`, `calloop-wayland-source`, `foldhash`, `hashbrown`, `jni-sys`, `linux-raw-sys`, `miniz_oxide`, `objc2`, `objc2-app-kit`, `objc2-foundation`, `objc2-ui-kit`, `redox_syscall`, `rustc-hash`, `rustix`, `smithay-client-toolkit`, `syn`, `thiserror`, `thiserror-impl`, `windows-sys`) required by upstream `eframe`/`winit`/`wgpu`/`zbus`.
+- **Licenses (`licenses ok`):** `0` license violations; 100% of resolved external crates satisfy the tightened MIT-compatible SPDX allowlist in `deny.toml` (`confidence-threshold = 0.8`), without widening the allowlist.
+- **Sources (`sources ok`):** `0` unknown registries or Git dependencies; 100% of external packages resolve exclusively from `https://github.com/rust-lang/crates.io-index`.
+
+### 6.4 Non-Blocking Operational Observations
+
+- GitHub Actions emitted a non-blocking platform annotation warning that `actions/checkout@11d5960a326750d5838078e36cf38b85af677262` (`v4.4.0`) targets Node 20 and was automatically run on Node 24; upgrading to a Node 24-native `actions/checkout` release can be tracked as routine CI maintenance in a subsequent stage.
+- Real interactive GUI smoke tests and visual rendering verification have been executed on Linux (Wayland and X11/XWayland, Intel iGPU and NVIDIA dGPU); Windows and macOS have verified CI compilation, automated tests, and `--release` binary builds, while interactive GUI validation on physical Windows/macOS desktops remains tracked for multi-OS desktop QA in later stages.
+
+### 6.5 Final Stage 00 Verdict
+
+**Approved — Stage 00 (Project Foundation) Technically Complete:**
+
+- All **10** audit findings (`FA-001` through `FA-010`) are either **Resolved** (`FA-001`–`FA-008`, `FA-010`) or **Transparently Documented as External Driver/Compositor Behavior** (`FA-009`).
+- All **6** GitHub Actions CI jobs (`lint`, `msrv`, `ubuntu-latest`, `macos-latest`, `windows-latest`, `supply-chain`) passed cleanly on `feat/project-foundation` with `--locked` verification and zero security/license regressions.
+- Branch `feat/project-foundation` is ready for maintainer review, merge authorization, and subsequent kickoff of **Stage 01 — Design System**.
