@@ -1,0 +1,26 @@
+# Build artifacts
+/target/
+**/*.rs.bk
+
+# Profiling and coverage artifacts
+*.profraw
+*.profdata
+perf.data*
+flamegraph.svg
+/lcov.info
+
+# Local environment and secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Editor and OS metadata
+.DS_Store
+Thumbs.db
+*~
+.vscode/
+.idea/
+
+# Derived local indices
+/graphify-out/
