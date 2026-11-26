@@ -2,6 +2,8 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod ime;
+
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -293,6 +295,7 @@ struct GitRustApp {
     state: AppState,
     view: Desktop,
     smoke_test: Option<SmokeTestController>,
+    wayland_ime: Option<ime::WaylandIme>,
 }
 
 impl GitRustApp {
@@ -318,11 +321,14 @@ impl GitRustApp {
 
         let state = AppState::new(metadata, host, graphics);
         let view = Desktop::new(&cc.egui_ctx, ui_options);
+        let wayland_ime = (protocol == WindowSessionProtocol::Wayland)
+            .then(|| ime::WaylandIme::install(&cc.egui_ctx));
 
         Self {
             state,
             view,
             smoke_test: smoke_test.map(SmokeTestController::new),
+            wayland_ime,
         }
     }
 
@@ -392,8 +398,17 @@ impl GitRustApp {
 }
 
 impl eframe::App for GitRustApp {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if let Some(ime) = &self.wayland_ime {
+            ime.preserve_during_logic(ctx);
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let events = self.view.show(ui, &self.state);
+        if let Some(ime) = &mut self.wayland_ime {
+            ime.remember_ui_output(ui.ctx());
+        }
         for event in events.into_iter_events() {
             self.state.apply(event);
         }
