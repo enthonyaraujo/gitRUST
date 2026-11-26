@@ -6,7 +6,7 @@ use std::{
 
 use gitrust_core::{
     navigation::Merge,
-    remotes::{RebaseState, RemoteIntent, RemoteNotice, RemotesView},
+    remotes::{Credential, RebaseState, RemoteAction, RemoteIntent, RemoteNotice, RemotesView},
     workspaces::Activity,
 };
 use gitrust_git::{
@@ -31,6 +31,7 @@ impl Coordinator {
             version: self.remotes.version.wrapping_add(1),
             ..State::default()
         };
+        self.sync_github_workspace();
     }
 
     pub(super) fn update_remotes(&mut self, snapshot: RemoteSnapshot) {
@@ -104,6 +105,51 @@ impl Coordinator {
         let Some(expected) = self.remotes.snapshot.clone() else {
             return;
         };
+        let linked = match &intent.action {
+            RemoteAction::Fetch(names, auth)
+                if matches!(auth.credential, Credential::LinkedAccount) =>
+            {
+                Some((names.first().filter(|_| names.len() == 1), false))
+            }
+            RemoteAction::Pull(name, _, auth)
+                if matches!(auth.credential, Credential::LinkedAccount) =>
+            {
+                Some((Some(name), false))
+            }
+            RemoteAction::Push { remote, auth, .. }
+                if matches!(auth.credential, Credential::LinkedAccount) =>
+            {
+                Some((Some(remote), true))
+            }
+            _ => None,
+        };
+        if let Some((remote, push)) = linked {
+            let endpoint = remote
+                .and_then(|name| expected.entries.iter().find(|remote| &remote.name == name))
+                .and_then(|remote| {
+                    if push {
+                        remote.push.clone()
+                    } else {
+                        remote.fetch.clone()
+                    }
+                });
+            if let (Some(account), Some(endpoint), Some(workspace)) = (
+                self.view.github.workspace_account,
+                endpoint
+                    .filter(|url| gitrust_core::github::RepositoryKey::from_https(url).is_some()),
+                self.view.github.workspace.clone(),
+            ) {
+                self.submit_github(crate::github_actor::Job::Authorize {
+                    account,
+                    endpoint,
+                    workspace,
+                    intent,
+                });
+            } else if let Some(view) = &mut self.view.remotes {
+                view.notice = Some(RemoteNotice::Authentication);
+            }
+            return;
+        }
         let (send, receive) = mpsc::sync_channel(2);
         let request = RemoteRequest {
             expected,
@@ -161,6 +207,7 @@ impl Coordinator {
             ) => RemoteNotice::Invalid,
             _ => RemoteNotice::Failed,
         });
+        self.complete_github_write(self.remotes.message);
         self.debounce.0 = None;
         self.inspect(trust, true);
     }

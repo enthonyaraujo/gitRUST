@@ -5,6 +5,9 @@ mod navigation;
 #[path = "workspace_remotes.rs"]
 mod remotes;
 
+#[path = "workspace_github.rs"]
+mod github;
+
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -95,7 +98,9 @@ impl Drop for Workspaces {
     }
 }
 
-enum WorkerEvent {
+pub(crate) enum WorkerEvent {
+    GithubCode(gitrust_core::github::DevicePrompt),
+    Github(Box<crate::github_actor::Message>),
     Complete(GitTaskId),
     Folder(Option<PathBuf>, bool),
     Progress(u64, TransferProgress),
@@ -147,6 +152,7 @@ struct Coordinator {
     changes: changes::ChangesState,
     navigation: navigation::State,
     remotes: remotes::State,
+    github: github::State,
     trusted: HashMap<PathBuf, TrustedRepository>,
     pending: Option<Pending>,
     events: Sender<WorkerEvent>,
@@ -189,6 +195,7 @@ impl Coordinator {
             changes: changes::ChangesState::default(),
             navigation: navigation::State::default(),
             remotes: remotes::State::default(),
+            github: github::State::default(),
             trusted: HashMap::new(),
             pending: None,
             events,
@@ -204,6 +211,7 @@ impl Coordinator {
         };
         let preferences = service.load_profile();
         service.discover_git();
+        service.initialize_github();
         service.publish(Some(preferences), None);
         loop {
             let ready = service.pending.is_none() && service.candidate.is_none();
@@ -223,6 +231,7 @@ impl Coordinator {
                 service.publish(None, directory);
             }
         }
+        service.shutdown_github();
         service.watched.take();
         service.invalidate();
         if let Some(engine) = service.engine.take() {
@@ -365,6 +374,7 @@ impl Coordinator {
             return;
         }
         match action {
+            RepositoryAction::Github(action) => self.github_action(action),
             RepositoryAction::Changes(intent) => self.on_changes(intent),
             RepositoryAction::Remote(intent) => self.on_remote(intent),
             RepositoryAction::Navigate(intent) => self.on_navigation(intent),
@@ -416,6 +426,7 @@ impl Coordinator {
                 auth,
             } => self.clone(&destination, &url, auth),
             RepositoryAction::Cancel => {
+                self.cancel_github();
                 if let Some(job) = &self.pending {
                     job.task.cancel();
                     self.view.activity = Activity::Cancelling;
@@ -488,6 +499,8 @@ impl Coordinator {
 
     fn on_reply(&mut self, event: WorkerEvent) -> Option<PathBuf> {
         match event {
+            WorkerEvent::GithubCode(code) => self.view.github.prompt = Some(code),
+            WorkerEvent::Github(result) => self.complete_github(*result),
             WorkerEvent::Complete(id) => self.complete(id),
             WorkerEvent::Folder(path, for_destination) => {
                 self.dialog_open = false;
@@ -558,7 +571,15 @@ impl Coordinator {
                     self.opened(info, status, trust, refresh);
                 }
             }
-            Err(error) => self.failed(pending.operation, &error),
+            Err(error) => {
+                if matches!(
+                    pending.operation,
+                    Operation::Provision(ProvisionKind::Clone)
+                ) {
+                    self.github_clone_failed();
+                }
+                self.failed(pending.operation, &error);
+            }
             Ok(_) => self.issue(WorkspaceIssue::OperationFailed),
         }
     }
@@ -581,6 +602,7 @@ impl Coordinator {
         if self.view.candidate.as_deref() != Some(path) {
             return;
         }
+        self.verify_github_clone(path, accepted);
         self.view.candidate = None;
         if let Some(candidate) = self.candidate.take() {
             if accepted {

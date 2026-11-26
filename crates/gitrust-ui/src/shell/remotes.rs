@@ -22,6 +22,7 @@ enum CredentialChoice {
     Account,
     Memory,
     SecretService,
+    LinkedAccount,
 }
 
 #[derive(Default)]
@@ -41,7 +42,7 @@ impl fmt::Debug for AuthFields {
 }
 
 impl AuthFields {
-    pub(super) fn show(&mut self, ui: &mut Ui, ssh: bool, l: Language) {
+    pub(super) fn show(&mut self, ui: &mut Ui, ssh: bool, linked: bool, l: Language) {
         if ssh {
             ui.label(l.local(
                 "OpenSSH verifies the host. Unlock protected keys in your SSH agent.",
@@ -79,7 +80,11 @@ impl AuthFields {
                     CredentialChoice::Account,
                     CredentialChoice::Memory,
                     CredentialChoice::SecretService,
-                ] {
+                    CredentialChoice::LinkedAccount,
+                ]
+                .into_iter()
+                .filter(|choice| linked || *choice != CredentialChoice::LinkedAccount)
+                {
                     if ui
                         .selectable_value(&mut self.credential, choice, credential_label(choice, l))
                         .clicked()
@@ -133,6 +138,7 @@ impl AuthFields {
                 },
                 CredentialChoice::Memory => Credential::MemoryCache,
                 CredentialChoice::SecretService => Credential::SecretService,
+                CredentialChoice::LinkedAccount => Credential::LinkedAccount,
             },
             ca: path(&self.ca),
             ..Auth::default()
@@ -142,6 +148,9 @@ impl AuthFields {
 
 fn credential_label(choice: CredentialChoice, l: Language) -> &'static str {
     match choice {
+        CredentialChoice::LinkedAccount => {
+            l.local("Linked GitHub account", "Conta GitHub vinculada")
+        }
         CredentialChoice::Anonymous => l.local("Anonymous", "Anônima"),
         CredentialChoice::Account => l.local(
             "Password or token for this operation",
@@ -525,6 +534,7 @@ impl RemoteUi {
         &mut self,
         ui: &Ui,
         view: &RemotesView,
+        linked: bool,
         l: Language,
         p: Palette,
     ) -> Option<RepositoryAction> {
@@ -537,7 +547,7 @@ impl RemoteUi {
             ScrollArea::vertical()
                 .max_height((ui.ctx().content_rect().height() - 130.0).max(70.0))
                 .show(ui, |ui| {
-                    self.form(ui, view, &dialog, l, p);
+                    self.form(ui, view, &dialog, linked, l, p);
                 });
             ui.horizontal_wrapped(|ui| {
                 let submit = ui
@@ -560,7 +570,15 @@ impl RemoteUi {
         None
     }
 
-    fn form(&mut self, ui: &mut Ui, view: &RemotesView, dialog: &Dialog, l: Language, p: Palette) {
+    fn form(
+        &mut self,
+        ui: &mut Ui,
+        view: &RemotesView,
+        dialog: &Dialog,
+        linked: bool,
+        l: Language,
+        p: Palette,
+    ) {
         match dialog {
             Dialog::Add | Dialog::Edit(_) | Dialog::Rename(_) => {
                 if !matches!(dialog, Dialog::Edit(_)) {
@@ -608,10 +626,15 @@ impl RemoteUi {
                 }
                 let endpoints = || remotes.iter().filter_map(|remote| remote.fetch.as_deref());
                 if endpoints().any(ssh_url) {
-                    self.auth.show(ui, true, l);
+                    self.auth.show(ui, true, false, l);
                 }
                 if endpoints().any(|url| !ssh_url(url)) {
-                    self.auth.show(ui, false, l);
+                    self.auth.show(
+                        ui,
+                        false,
+                        linked && remotes.len() == 1 && endpoints().any(github_https),
+                        l,
+                    );
                 }
             }
             Dialog::Pull(remote) => {
@@ -629,38 +652,55 @@ impl RemoteUi {
                     ui.label(l.local("Clean worktree", "Árvore de trabalho limpa"));
                 }
                 self.integration_options(ui, l, p);
-                self.auth
-                    .show(ui, remote.fetch.as_deref().is_some_and(ssh_url), l);
-            }
-            Dialog::Push(remote) => {
-                endpoint_line(ui, &remote.name, remote.push.as_deref(), l);
-                if let Some(current) = &view.current {
-                    ui.label(format!(
-                        "{} · {current}",
-                        l.local("Local branch", "Branch local")
-                    ));
-                }
-                Self::tracking(ui, view, l);
-                field(
+                self.auth.show(
                     ui,
-                    l.local("Remote branch", "Branch remota"),
-                    &mut self.branch,
-                    false,
+                    remote.fetch.as_deref().is_some_and(ssh_url),
+                    linked && remote.fetch.as_deref().is_some_and(github_https),
+                    l,
                 );
-                ui.checkbox(
-                    &mut self.track,
-                    l.local(
-                        "Set as upstream after push",
-                        "Configurar como upstream após push",
-                    ),
-                );
-                self.auth
-                    .show(ui, remote.push.as_deref().is_some_and(ssh_url), l);
             }
+            Dialog::Push(remote) => self.push_fields(ui, view, remote, linked, l),
             Dialog::Abort => {
                 ui.label(l.local("Restore the pre-rebase state. New work blocks abort.", "Restaurar o estado anterior ao rebase. Alterações posteriores impedem o aborto."));
             }
         }
+    }
+
+    fn push_fields(
+        &mut self,
+        ui: &mut Ui,
+        view: &RemotesView,
+        remote: &Remote,
+        linked: bool,
+        l: Language,
+    ) {
+        endpoint_line(ui, &remote.name, remote.push.as_deref(), l);
+        if let Some(current) = &view.current {
+            ui.label(format!(
+                "{} · {current}",
+                l.local("Local branch", "Branch local")
+            ));
+        }
+        Self::tracking(ui, view, l);
+        field(
+            ui,
+            l.local("Remote branch", "Branch remota"),
+            &mut self.branch,
+            false,
+        );
+        ui.checkbox(
+            &mut self.track,
+            l.local(
+                "Set as upstream after push",
+                "Configurar como upstream após push",
+            ),
+        );
+        self.auth.show(
+            ui,
+            remote.push.as_deref().is_some_and(ssh_url),
+            linked && remote.push.as_deref().is_some_and(github_https),
+            l,
+        );
     }
 
     fn integration_options(&mut self, ui: &mut Ui, l: Language, p: Palette) {
@@ -733,6 +773,10 @@ impl RemoteUi {
     }
 }
 
+fn github_https(endpoint: &str) -> bool {
+    gitrust_core::github::RepositoryKey::from_https(endpoint).is_some()
+}
+
 fn send(view: &RemotesView, action: Action) -> RepositoryAction {
     RepositoryAction::Remote(RemoteIntent {
         version: view.version,
@@ -740,14 +784,14 @@ fn send(view: &RemotesView, action: Action) -> RepositoryAction {
     })
 }
 
-fn field(ui: &mut Ui, label: &str, text: &mut String, secret: bool) {
+fn field(ui: &mut Ui, label: &str, text: &mut String, secret: bool) -> egui::Response {
     let label = ui.label(label);
     ui.add(
         TextEdit::singleline(text)
             .desired_width(f32::INFINITY)
             .password(secret),
     )
-    .labelled_by(label.id);
+    .labelled_by(label.id)
 }
 
 fn endpoint_line(ui: &mut Ui, label: &str, endpoint: Option<&str>, l: Language) {
@@ -889,5 +933,37 @@ pub(super) fn notice_text(notice: RemoteNotice, l: Language) -> &'static str {
         N::Cancelled => l.local("Transfer cancelled.", "Transferência cancelada."),
         N::Timeout => l.local("The operation timed out.", "A operação excedeu o tempo limite."),
         N::Failed => l.local("Remote operation failed.", "A operação remota falhou."),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn protected_credential_field_accepts_keyboard_input_and_keeps_it_out_of_debug() {
+        let context = egui::Context::default();
+        let mut form = AuthFields {
+            credential: CredentialChoice::Account,
+            user: "fixture".into(),
+            ..AuthFields::default()
+        };
+        let mut first = context.run_ui(egui::RawInput::default(), |ui| {
+            field(ui, "Password or token", &mut form.password, true).request_focus();
+        });
+        first.textures_delta.clear();
+        let input = egui::RawInput {
+            events: vec![egui::Event::Text("fixture-protected-input".into())],
+            ..egui::RawInput::default()
+        };
+        let mut second = context.run_ui(input, |ui| {
+            field(ui, "Password or token", &mut form.password, true);
+        });
+        second.textures_delta.clear();
+        assert_eq!(form.password, "fixture-protected-input");
+        assert!(!format!("{form:?}").contains("fixture-protected-input"));
+        let auth = form.take(false);
+        assert!(matches!(auth.credential, Credential::Password { .. }));
+        assert_eq!(form.password, "");
     }
 }

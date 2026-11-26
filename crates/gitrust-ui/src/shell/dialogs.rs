@@ -1,7 +1,7 @@
 use egui::{Button, Id, RichText, ScrollArea, ThemePreference, Ui};
 use gitrust_core::AppState;
 
-use super::{BRANCHES, Demo, Desktop, Dialog, UiOptions};
+use super::{BRANCHES, Demo, Desktop, Dialog, Screen, UiOptions};
 use crate::components as c;
 use crate::i18n::{Language, Text};
 use crate::theme::{Palette, size, weight};
@@ -17,9 +17,22 @@ impl Desktop {
                         .max_height(max_height)
                         .show(ui, |ui| preferences(ui, &mut self.options));
                     ui.separator();
-                    ui.button(l.text(Text::Close)).clicked()
+                    ui.horizontal_wrapped(|ui| {
+                        let accounts = self.managed.is_some()
+                            && ui
+                                .button(l.local("GitHub Accounts", "Contas do GitHub"))
+                                .clicked();
+                        (ui.button(l.text(Text::Close)).clicked(), accounts)
+                    })
+                    .inner
                 });
-                if r.inner || r.should_close() {
+                if r.inner.1 {
+                    if let Some(managed) = &mut self.managed {
+                        managed.github.accounts();
+                    }
+                    self.screen = Screen::Github;
+                }
+                if r.inner.0 || r.inner.1 || r.should_close() {
                     self.dialog = Dialog::None;
                 }
             }
