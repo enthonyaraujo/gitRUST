@@ -283,8 +283,8 @@ fn staged_and_worktree_patches_have_binary_rename_mode_line_and_literal_path_met
     fixture.git(["mv", "--", "before.txt", "after name.txt"]);
     fixture.write("binary", [0, 1, 3]);
     fixture.write("text", b"first\nnew\r\nfinal");
-    fixture.write("-dash", "second\n");
     fixture.git(["update-index", "--chmod=+x", "--", "-dash"]);
+    fixture.write("-dash", "second\n");
     let engine = engine(EngineOptions::default());
     let repo = trust(&engine, fixture.path());
     let staged = diff(&engine, &repo, DiffTarget::Index, None);
@@ -342,6 +342,8 @@ fn staged_and_worktree_patches_have_binary_rename_mode_line_and_literal_path_met
     let one = diff(&engine, &repo, DiffTarget::Worktree, Some(path));
     assert_eq!(one.files.len(), 1);
     assert_eq!(one.files[0].path.as_bytes(), b"-dash");
+    let mut lines = one.files[0].hunks.iter().flat_map(|hunk| &hunk.lines);
+    assert!(lines.any(|line| line.kind == DiffLineKind::Added && line.content == b"second"));
     let final_id = fixture.commit("edited");
     let between = diff(
         &engine,
