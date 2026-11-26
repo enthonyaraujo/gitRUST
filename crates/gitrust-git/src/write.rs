@@ -147,6 +147,9 @@ impl Runner<'_> {
         repo: &TrustedRepository,
         mutation: &Mutation,
     ) -> Result<TaskValue, GitError> {
+        if let MutationAction::Navigate(operation) = &mutation.action {
+            return self.mutate_navigation(repo, &mutation.expected, operation);
+        }
         let (_, width, _) = self.prepare(repo)?;
         let cwd = repo
             .repository()
@@ -173,6 +176,9 @@ impl Runner<'_> {
         let rows = change_rows(&actual)?;
         let head = self.head(repo, width)?;
         match &mutation.action {
+            MutationAction::Navigate(_) => {
+                return Err(GitError::InvalidArgument("mutation dispatch"));
+            }
             MutationAction::Stage(keys) => {
                 let paths = selection_paths(cwd, keys, &rows, false)?;
                 self.run_paths(
@@ -601,7 +607,7 @@ fn unstage_spec(head: &HeadState) -> GitCommandSpec {
     }
 }
 
-fn inspect_path(root: &Path, path: &Path, regular: bool) -> Result<(), GitError> {
+pub(super) fn inspect_path(root: &Path, path: &Path, regular: bool) -> Result<(), GitError> {
     let resource = RepoPath::new(path.to_path_buf())?;
     let mut path = root.to_path_buf();
     let mut parts = resource.as_path().components().peekable();
@@ -746,7 +752,7 @@ impl Drop for IndexEdit {
     }
 }
 
-fn commit_message(draft: &CommitDraft) -> Result<Vec<u8>, GitError> {
+pub(super) fn commit_message(draft: &CommitDraft) -> Result<Vec<u8>, GitError> {
     let title = draft.title.trim();
     if title.is_empty()
         || title.len() > 4096
@@ -762,7 +768,7 @@ fn commit_message(draft: &CommitDraft) -> Result<Vec<u8>, GitError> {
     Ok(format!("{title}\n\n{}\n", draft.description.trim_end_matches('\n')).into_bytes())
 }
 
-fn identity(
+pub(super) fn identity(
     author: &CommitAuthor,
     original: Option<&Signature>,
 ) -> Result<Vec<(&'static str, OsString)>, GitError> {
@@ -818,7 +824,9 @@ fn identity(
     Ok(env)
 }
 
-fn signing_options(signing: &CommitSigning) -> Result<(OsString, Vec<OsString>), GitError> {
+pub(super) fn signing_options(
+    signing: &CommitSigning,
+) -> Result<(OsString, Vec<OsString>), GitError> {
     let (format, program_key, program, key) = match signing {
         CommitSigning::None => return Ok(("--no-gpg-sign".into(), Vec::new())),
         CommitSigning::OpenPgp(fingerprint)

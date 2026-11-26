@@ -48,6 +48,7 @@ pub(crate) const NULL_PATH: &str = "/dev/null";
 #[derive(Clone, Copy)]
 pub(crate) enum Policy<'a> {
     Local,
+    Author(&'a [(&'static str, OsString)], bool),
     Index(&'a Path, &'a [(&'static str, OsString)]),
     OpenPgp(&'a Path, &'a [(&'static str, OsString)]),
     Clone(Option<&'a mpsc::SyncSender<TransferProgress>>),
@@ -94,7 +95,12 @@ fn command(
         }
     }
 
-    if matches!(policy, Policy::OpenPgp(..))
+    if let Policy::Author(identity, _) = policy {
+        for (key, value) in identity {
+            cmd.env(key, value);
+        }
+    }
+    if matches!(policy, Policy::OpenPgp(..) | Policy::Author(_, true))
         && let Some(keyring) =
             std::env::var_os("GNUPGHOME").filter(|dir| Path::new(dir).is_absolute())
     {

@@ -16,8 +16,9 @@ pub use command::{DiffTarget, HistoryPage, Inspection, OperationSafetyClass, Rep
 pub use creation::{CloneRepository, CloneSource, CreateRepository};
 pub use diff::{DiffFile, DiffHunk, DiffLine, DiffLineKind, RepositoryDiff};
 pub use engine::{
-    CommitDetails, CommitFile, EngineOptions, GitEngine, GitTask, GitTaskId, GitTaskState,
-    TaskReport, TaskValue,
+    AbortProof, BranchSource, CommitDetails, CommitFile, EngineOptions, GitEngine, GitTask,
+    GitTaskId, GitTaskState, MergeState, NavigationOutcome, NavigationResult, NavigationSnapshot,
+    RefMutation, RefTip, TaskReport, TaskValue,
 };
 pub use executable::{GitExecutable, GitVersion};
 pub use history::{BranchInfo, BranchList, CommitInfo, CommitSignature, History, Signature};

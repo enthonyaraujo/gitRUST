@@ -19,7 +19,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub use navigation::{CommitDetails, CommitFile};
+pub use navigation::{
+    AbortProof, BranchSource, CommitDetails, CommitFile, MergeState, NavigationOutcome,
+    NavigationResult, NavigationSnapshot, RefMutation, RefTip,
+};
 
 use crate::{
     BranchList, DiffTarget, GitError, GitExecutable, HeadState, History, HistoryPage, Inspection,
@@ -106,6 +109,10 @@ pub enum TaskValue {
     Changed(Option<ObjectId>),
     /// History page.
     History(History),
+    /// Branches and merge state.
+    Navigation(crate::NavigationSnapshot),
+    /// Result of a branch or merge mutation.
+    NavigationResult(crate::NavigationResult),
     /// Commit details and file statistics.
     CommitDetails(crate::CommitDetails),
     /// Branch snapshot.
@@ -483,7 +490,10 @@ fn worker_loop(scheduler: &Scheduler, executable: &GitExecutable, options: Engin
             outputs: Vec::new(),
         };
         let result = runner.execute(&job.request).and_then(|value| {
-            if !matches!(value, TaskValue::Provisioned(_) | TaskValue::Changed(_)) {
+            if !matches!(
+                value,
+                TaskValue::Provisioned(_) | TaskValue::Changed(_) | TaskValue::NavigationResult(_)
+            ) {
                 control.check()?;
             }
             Ok(value)
@@ -586,6 +596,7 @@ impl Runner<'_> {
                     .map(TaskValue::History)
             }
             Inspection::Branches => self.branches(trusted, width).map(TaskValue::Branches),
+            Inspection::Navigation => self.navigation(trusted, width).map(TaskValue::Navigation),
             Inspection::CommitDetails(id, parent) => self
                 .details(location, id, parent.as_ref(), width)
                 .map(TaskValue::CommitDetails),

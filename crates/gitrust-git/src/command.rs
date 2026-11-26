@@ -121,6 +121,8 @@ pub enum Inspection {
     CommitDetails(ObjectId, Option<ObjectId>),
     /// Textual patch for one listed file of a commit.
     CommitPatch(ObjectId, Option<ObjectId>, RepoPath),
+    /// Local reference and merge state.
+    Navigation,
     /// Local and remote-tracking references.
     Branches,
 }
@@ -154,7 +156,13 @@ impl Request {
 
 pub(crate) enum Builtin {
     Add,
+    Branch,
+    Switch,
+    Merge,
+    MergeBase,
+    Commit,
     HashObject,
+    CheckRef,
     Apply,
     CommitTree,
     Restore,
@@ -179,7 +187,13 @@ impl Builtin {
         match self {
             Self::CatFile => "cat-file",
             Self::Add => "add",
+            Self::Branch => "branch",
+            Self::Switch => "switch",
+            Self::Merge => "merge",
+            Self::MergeBase => "merge-base",
+            Self::Commit => "commit",
             Self::HashObject => "hash-object",
+            Self::CheckRef => "check-ref-format",
             Self::Apply => "apply",
             Self::CommitTree => "commit-tree",
             Self::Restore => "restore",

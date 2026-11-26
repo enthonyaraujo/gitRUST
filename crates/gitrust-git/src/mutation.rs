@@ -368,6 +368,8 @@ pub struct Mutation {
 /// Typed allowlist of mutating operations.
 #[derive(Clone)]
 pub enum MutationAction {
+    /// Perform a typed branch or merge operation.
+    Navigate(Box<crate::RefMutation>),
     /// Update the index from selected worktree paths.
     Stage(Vec<ChangeKey>),
     /// Reset the selected entries in the index.
@@ -393,6 +395,7 @@ impl fmt::Debug for MutationAction {
             Self::Partial { .. } => "Partial",
             Self::Discard(_) => "Discard",
             Self::Commit(_) => "Commit",
+            Self::Navigate(_) => "Navigate",
         })
     }
 }
@@ -401,7 +404,9 @@ impl Mutation {
     pub(crate) const fn safety_class(&self) -> OperationSafetyClass {
         if matches!(
             &self.action,
-            MutationAction::Discard(_) | MutationAction::Commit(CommitDraft { amend: true, .. })
+            MutationAction::Discard(_)
+                | MutationAction::Commit(CommitDraft { amend: true, .. })
+                | MutationAction::Navigate(_)
         ) {
             OperationSafetyClass::DestructiveWrite
         } else {
