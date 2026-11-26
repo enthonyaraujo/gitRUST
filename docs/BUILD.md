@@ -22,6 +22,8 @@ git --version
 
 ## 2. Platform System Dependencies
 
+During Stages 04–06, Linux is the development and automatic CI target. The Windows and macOS build definitions remain available for manual workflow dispatch through the deferred-platform option. Native tests, graphics validation, and compatibility fixes across all three platforms resume in Stage 07.
+
 ### Linux (First-Class Platform: Wayland & X11)
 
 `gitRUST` compiles with native support for **both Wayland and X11** and uses **`wgpu` (Vulkan primary, OpenGL ES fallback)** for hardware-accelerated rendering on integrated and discrete GPUs.
@@ -103,7 +105,7 @@ cargo build --locked --workspace --release
 
 ### Git integration tests and hosted runners
 
-`cargo test --locked --workspace` runs real-Git integration tests in temporary repositories. Missing, invalid and older Git binaries fail the tests explicitly. The Linux MSRV job and Linux, Windows and macOS test jobs record `git --version` before running the suites. The currently published Linux, Windows and macOS images include versions above the floor. For a self-hosted runner, provision an updated native Git and prefer its installation directory in PATH before running the jobs. The test suite neither installs nor upgrades system Git. The Unix path fixture exercises tabs, newlines and literal pathspecs on Linux and macOS. Linux also exercises a non-UTF-8 filename on disk. The macOS fixture checks non-UTF-8 bytes at the parser boundary because the hosted filesystem rejects that filename. To verify the floor, prepend the absolute directory of a separately built Git 2.45.0 executable to the test process PATH and run `cargo test --locked -p gitrust-git --test inspection`. [Ubuntu runner](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2604-Readme.md) · [Windows runner](https://github.com/actions/runner-images/blob/main/images/windows/Windows2025-VS2026-Readme.md) · [macOS runner](https://github.com/actions/runner-images/blob/main/images/macos/macos-26-arm64-Readme.md)
+`cargo test --locked --workspace` runs real-Git integration tests in temporary repositories. Missing, invalid and older Git binaries fail the tests explicitly. The Linux MSRV job and the platform test jobs record `git --version` before running the suites. The currently published Linux, Windows and macOS images include versions above the floor. For a self-hosted runner, provision an updated native Git and prefer its installation directory in PATH before running the jobs. The test suite neither installs nor upgrades system Git. The Unix path fixture exercises tabs, newlines and literal pathspecs on Linux and macOS. Linux also exercises a non-UTF-8 filename on disk. The macOS fixture checks non-UTF-8 bytes at the parser boundary because the hosted filesystem rejects that filename. To verify the floor, prepend the absolute directory of a separately built Git 2.45.0 executable to the test process PATH and run `cargo test --locked -p gitrust-git --test inspection`. [Ubuntu runner](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2604-Readme.md) · [Windows runner](https://github.com/actions/runner-images/blob/main/images/windows/Windows2025-VS2026-Readme.md) · [macOS runner](https://github.com/actions/runner-images/blob/main/images/macos/macos-26-arm64-Readme.md)
 
 ## 4. Running the Desktop Application
 

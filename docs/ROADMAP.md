@@ -11,14 +11,15 @@ This document defines the staged engineering plan for **gitRUST**. Each stage ha
 | **00** | Project Foundation | Completed and integrated | Yes |
 | **01** | Design System | Completed | Yes |
 | **02** | Git Engine | Completed and integrated | Yes |
-| **03** | Repository Management | Implemented locally, pending review | Yes |
+| **03** | Repository Management | Completed on Linux and integrated | Yes |
 | **04** | Changes and Commits | Planned | Yes |
 | **05** | Branches and History | Planned | Yes |
 | **06** | Remote Operations | Planned | Yes |
-| **07** | Advanced Git Operations | Planned | Post-`v0.1.0` |
-| **08** | Provider Integrations | Planned | Post-`v0.1.0` |
-| **09** | Security and Performance | Planned (Continuous + Dedicated Audit) | Post-`v0.1.0` |
-| **10** | Distribution and Release | Planned | Post-`v0.1.0` |
+| **07** | Cross-Platform Validation | Planned (release gate) | Yes |
+| **08** | Advanced Git Operations | Planned | Post-`v0.1.0` |
+| **09** | Provider Integrations | Planned | Post-`v0.1.0` |
+| **10** | Security and Performance | Planned (Continuous + Dedicated Audit) | Post-`v0.1.0` |
+| **11** | Distribution and Release | Planned | Post-`v0.1.0` |
 
 ---
 
@@ -45,7 +46,7 @@ This document defines the staged engineering plan for **gitRUST**. Each stage ha
 - Open, authorize, track, reopen and remove local workspace entries.
 - Initialize new workspaces and clone public HTTPS repositories with progress, cancellation and secure publication.
 - Persist appearance and workspace history and refresh the active workspace on filesystem changes, focus or manual request.
-- [Repository management](REPOSITORY_MANAGEMENT.md)
+- Validated on Linux and integrated into `develop` at `dc9a6eb`. [Repository management](REPOSITORY_MANAGEMENT.md) · [PR #6](https://github.com/enthonyaraujo/gitRUST/pull/6)
 
 ### Stage 04 — Changes and Commits
 - Working tree and index inspection (staged, unstaged, untracked, conflicted, and renamed files).
@@ -64,9 +65,14 @@ This document defines the staged engineering plan for **gitRUST**. Each stage ha
 
 ---
 
+### Stage 07 — Cross-Platform Validation
+- Re-enable the Windows and macOS automatic CI matrix. Verify native tests and desktop behavior on Linux, Windows, and macOS.
+- Recheck exclusive repository publication on Windows, the directory picker, graphics, filesystem notifications, signing integrations, and other portability issues against the completed MVP.
+- The initial Stage 03 Windows CI failed when a concurrently created empty directory could be replaced. The correction passed native tests on the Stage 03 merge. Track the regression through the Stage 07 validation. [First failed job](https://github.com/enthonyaraujo/gitRUST/actions/runs/45836809755/job/139967749025) · [Stage 03 merge](https://github.com/enthonyaraujo/gitRUST/actions/runs/45848058298)
+
 ## First Public Milestone: `v0.1.0`
 
-The first public release, **`v0.1.0`**, is planned to encompass **Stages 00 through 06**.
+Stages 00 through 06 form the functional MVP. Stages 04 through 06 use Linux-first development and automatic CI for formatting and Clippy, MSRV, Linux build and tests, and dependency and license auditing. Stage 07 gates the first public release and any cross-platform support announcement.
 
 Advancing to `v0.1.0` requires:
 1. Functional completion of Stages `00`–`06` without mock or partial placeholders.
@@ -78,15 +84,15 @@ Advancing to `v0.1.0` requires:
 
 ## Post-`v0.1.0` Stages
 
-### Stage 07 — Advanced Git Operations
+### Stage 08 — Advanced Git Operations
 - Interactive/guided stash management, cherry-pick, revert, tag management, rebase workflows, conflict resolution helpers, submodule/worktree awareness, and Git LFS status visibility.
 
-### Stage 08 — Provider Integrations
+### Stage 09 — Provider Integrations
 - Optional, user-authorized integrations in `gitrust-providers` for GitHub, GitLab, and compatible self-hosted instances (pull/merge request discovery, clone-from-account, status checks).
 - Native OS keychain integration for provider tokens with strict TLS verification.
 
-### Stage 09 — Security and Performance
+### Stage 10 — Security and Performance
 - Comprehensive threat-model review, fuzzing of Git output parsers (`cargo-fuzz` / property-based tests), memory/CPU profiling on large monorepos, and targeted evaluation of `gitoxide` (`gix`) for read-intensive hotspots where justified by measurements.
 
-### Stage 10 — Distribution and Release
+### Stage 11 — Distribution and Release
 - Reproducible release pipelines, code signing, SBOM/provenance generation, Linux desktop integration (`.desktop`, AppStream metainfo, Flatpak / distro packaging artifacts), Windows installer, and macOS app bundle.

@@ -31,7 +31,7 @@ Hardware-accelerated desktop applications using Vulkan (`wgpu`), Metal, or Direc
 
 ## 2. Anti-Premature-Optimization Policy
 
-- **Stability and diagnostics come first:** Stage 00 uses standard Cargo `release` defaults (`panic = "unwind"`, unstripped symbol tables until Stage 10 packaging) so crash backtraces and profiling tools (`perf`, `samply`, `heaptrack`) remain accurate.
+- **Stability and diagnostics come first:** Stage 00 uses standard Cargo `release` defaults (`panic = "unwind"`, unstripped symbol tables until Stage 11 packaging) so crash backtraces and profiling tools (`perf`, `samply`, `heaptrack`) remain accurate.
 - **Architectural efficiency over micro-tricks:** Zero idle CPU is achieved structurally through event-driven `egui`/`eframe` rendering (`ControlFlow::Wait`), zero per-frame static string allocations (`FoundationView` label caching), and defaulting `wgpu` to `PowerPreference::LowPower` (overridable via `WGPU_POWER_PREF=high`).
 
 ---
