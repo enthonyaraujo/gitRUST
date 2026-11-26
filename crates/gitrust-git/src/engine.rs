@@ -1,5 +1,7 @@
 #[path = "provision.rs"]
 mod provision;
+#[path = "write.rs"]
+mod write;
 
 use std::{
     collections::VecDeque,
@@ -90,6 +92,14 @@ pub enum TaskValue {
     Status(RepositoryStatus),
     /// Parsed two-way diff.
     Diff(RepositoryDiff),
+    /// A worker-prepared file patch.
+    Change(crate::ChangePatch),
+    /// Exact patches approved together for discard.
+    DiscardReview(Vec<crate::ChangePatch>),
+    /// Local commit prefill.
+    CommitDraft(gitrust_core::changes::CommitDraft, Option<ObjectId>),
+    /// A local mutation completed. A commit includes its object ID.
+    Changed(Option<ObjectId>),
     /// History page.
     History(History),
     /// Branch snapshot.
@@ -275,7 +285,9 @@ impl GitEngine {
         let access = Access {
             identity: match &request {
                 Request::Identify(_) | Request::Create(_) | Request::Clone(_) => None,
-                Request::Inspect(repository, _) => Some(repository.repository().identity().clone()),
+                Request::Inspect(repository, _) | Request::Mutate(repository, _) => {
+                    Some(repository.repository().identity().clone())
+                }
             },
             class: request.safety_class(),
         };
@@ -465,7 +477,7 @@ fn worker_loop(scheduler: &Scheduler, executable: &GitExecutable, options: Engin
             outputs: Vec::new(),
         };
         let result = runner.execute(&job.request).and_then(|value| {
-            if !matches!(value, TaskValue::Provisioned(_)) {
+            if !matches!(value, TaskValue::Provisioned(_) | TaskValue::Changed(_)) {
                 control.check()?;
             }
             Ok(value)
@@ -491,6 +503,7 @@ impl Runner<'_> {
                 RepositoryCandidate::discover(path, self.control).map(TaskValue::Identified)
             }
             Request::Inspect(repository, operation) => self.inspect(repository, operation),
+            Request::Mutate(repository, operation) => self.mutate(repository, operation),
             Request::Create(request) => {
                 self.provision(&request.path, provision::Operation::Init(&request.branch))
             }
@@ -546,6 +559,13 @@ impl Runner<'_> {
                 self.diff(location, target, path.as_ref(), width)
                     .map(TaskValue::Diff)
             }
+            Inspection::Change(key) => self.preview(trusted, key, width).map(TaskValue::Change),
+            Inspection::DiscardReview(keys) => self
+                .review_discard(trusted, keys, width)
+                .map(TaskValue::DiscardReview),
+            Inspection::CommitDraft { amend } => self
+                .draft(trusted, width, *amend)
+                .map(|(draft, head)| TaskValue::CommitDraft(draft, head)),
             Inspection::History(page) => self
                 .history(location, head()?, *page, width)
                 .map(TaskValue::History),
@@ -569,21 +589,7 @@ impl Runner<'_> {
         width: usize,
         include_ignored: bool,
     ) -> Result<RepositoryStatus, GitError> {
-        let spec = GitCommandSpec::new(Builtin::Status)
-            .args([
-                "--porcelain=v2",
-                "-z",
-                "--branch",
-                "--ahead-behind",
-                "--untracked-files=all",
-                "--ignore-submodules=all",
-                "--find-renames",
-            ])
-            .arg(if include_ignored {
-                "--ignored=matching"
-            } else {
-                "--no-ignored"
-            });
+        let spec = status_spec(include_ignored);
         let symbolic = trusted.head_reference()?;
         let data = self.record(trusted.repository().location(), spec, &[], false)?;
         RepositoryStatus::parse_with_head(data, symbolic.as_ref(), Some(width))
@@ -651,6 +657,19 @@ impl Runner<'_> {
         path: Option<&crate::RepoPath>,
         width: usize,
     ) -> Result<RepositoryDiff, GitError> {
+        let spec = self.diff_spec(location, target, path, width, false)?;
+        let data = self.record(location, spec, &[], true)?;
+        RepositoryDiff::parse(data)
+    }
+
+    fn diff_spec(
+        &self,
+        location: &Path,
+        target: &DiffTarget,
+        path: Option<&crate::RepoPath>,
+        width: usize,
+        untracked: bool,
+    ) -> Result<GitCommandSpec, GitError> {
         let mut spec = GitCommandSpec::new(Builtin::Diff)
             .args([
                 "--raw",
@@ -671,6 +690,12 @@ impl Runner<'_> {
                 "--exit-code",
             ])
             .arg(format!("--abbrev={width}"));
+        if untracked {
+            let path = path.ok_or(GitError::InvalidArgument("untracked file"))?;
+            return Ok(spec
+                .args(["--no-index", "--", process::NULL_PATH])
+                .arg(git_path(path.as_path())));
+        }
         spec = match target {
             DiffTarget::Worktree => spec.arg("--ours"),
             DiffTarget::Index => spec.arg("--cached"),
@@ -684,8 +709,7 @@ impl Runner<'_> {
         if let Some(path) = path {
             spec = spec.arg(git_path(path.as_path()));
         }
-        let data = self.record(location, spec, &[], true)?;
-        RepositoryDiff::parse(data)
+        Ok(spec)
     }
 
     fn head(&self, repository: &TrustedRepository, width: usize) -> Result<HeadState, GitError> {
@@ -819,6 +843,18 @@ impl Runner<'_> {
         input: &[u8],
         limits: ProcessLimits,
     ) -> Result<ProcessOutput, GitError> {
+        self.run_policy(location, spec, input, limits, process::Policy::Local, &[])
+    }
+
+    fn run_policy(
+        &self,
+        location: Option<&Path>,
+        spec: GitCommandSpec,
+        input: &[u8],
+        limits: ProcessLimits,
+        policy: process::Policy<'_>,
+        overrides: &[OsString],
+    ) -> Result<ProcessOutput, GitError> {
         let mut args = [
             "--no-pager",
             "--no-optional-locks",
@@ -851,16 +887,36 @@ impl Runner<'_> {
             args.push("-C".into());
             args.push(git_path(path));
         }
+        args.extend_from_slice(overrides);
         args.extend(spec.args);
-        process::run(
+        process::run_with_policy(
             self.executable.path(),
             cwd,
             &args,
             input,
             limits,
             self.control,
+            policy,
         )
     }
+}
+
+fn status_spec(include_ignored: bool) -> GitCommandSpec {
+    GitCommandSpec::new(Builtin::Status)
+        .args([
+            "--porcelain=v2",
+            "-z",
+            "--branch",
+            "--ahead-behind",
+            "--untracked-files=all",
+            "--ignore-submodules=all",
+            "--find-renames",
+        ])
+        .arg(if include_ignored {
+            "--ignored=matching"
+        } else {
+            "--no-ignored"
+        })
 }
 
 fn checked(output: ProcessOutput, diff: bool) -> Result<ProcessOutput, GitError> {

@@ -193,6 +193,8 @@ pub enum WorkspaceIssue {
 /// Data consumed by the repository workspace view.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RepositoryView {
+    /// Active changes workspace, after a real inspection.
+    pub changes: Option<crate::changes::ChangesView>,
     /// Saved catalog and selected history.
     pub recent: RecentRepositories,
     /// A known unavailable path in the catalog.
@@ -222,6 +224,8 @@ pub struct RepositoryView {
 /// Intent sent by the native view to the worker coordinator.
 #[derive(Clone)]
 pub enum RepositoryAction {
+    /// Dispatch an intent for the active changes workspace.
+    Changes(crate::changes::ChangesIntent),
     /// Ask the native platform dialog for a folder.
     Browse,
     /// Choose a parent directory for a new workspace.
@@ -257,6 +261,7 @@ impl std::fmt::Debug for RepositoryAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let action = match self {
             Self::Browse => "Browse",
+            Self::Changes(_) => "Changes",
             Self::BrowseDestination => "BrowseDestination",
             Self::Open(_) => "Open",
             Self::Authorize { .. } => "Authorize",

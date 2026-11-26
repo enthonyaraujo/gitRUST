@@ -31,7 +31,7 @@ Hardware-accelerated desktop applications using Vulkan (`wgpu`), Metal, or Direc
 
 ## 2. Anti-Premature-Optimization Policy
 
-- **Stability and diagnostics come first:** Stage 00 uses standard Cargo `release` defaults (`panic = "unwind"`, unstripped symbol tables until Stage 10 packaging) so crash backtraces and profiling tools (`perf`, `samply`, `heaptrack`) remain accurate.
+- **Stability and diagnostics come first:** Stage 00 uses standard Cargo `release` defaults (`panic = "unwind"`, unstripped symbol tables until Stage 11 packaging) so crash backtraces and profiling tools (`perf`, `samply`, `heaptrack`) remain accurate.
 - **Architectural efficiency over micro-tricks:** Zero idle CPU is achieved structurally through event-driven `egui`/`eframe` rendering (`ControlFlow::Wait`), zero per-frame static string allocations (`FoundationView` label caching), and defaulting `wgpu` to `PowerPreference::LowPower` (overridable via `WGPU_POWER_PREF=high`).
 
 ---
@@ -292,3 +292,10 @@ Time to the visible workspace via AT-SPI was 273 ms in Wayland and 664 ms in XWa
 With Rust 1.99.1 and the locked release settings, the Stage 02 base (`938c8b9`) built to 28,570,216 bytes and the reviewed Stage 03 release built to 30,426,280 bytes. The difference includes 1,009,152 bytes of executable code and 454,593 bytes of symbol and string tables. Linux linker maps attribute retained input sections of 327,703 bytes to `notify`, 114,214 to `rfd`, 58,377 to `url`, 7,248 to `crossbeam-channel`, and 4,096 to `directories`. They attribute another 159,763 bytes to the transitive `idna` crate and 286,653 bytes to the engine now linked into the desktop app. Inlining, shared code, alignment and linker-generated sections limit the precision of this attribution. The review kept the existing release profile and audited dependencies. Local measurement files are in `target/stage03.1-evidence/`.
 
 The reviewed Linux release completed 18 process measurements of 60 seconds on Intel RPL-P and wgpu/Vulkan in private Mutter 51.1 sessions. Each protocol had three trials per scenario. Empty and open workspaces reached at most 0.0167% process CPU. The real repository search field with AT-SPI focus reached 0.5333% in Wayland and 0.6333% in XWayland. The highest five-second interval was 0.8000%. The raw samples and memory breakdown are recorded in `target/stage03.1-evidence/RELATORIO.md`.
+
+
+## 11. Stage 04 Changes workspace
+
+The coordinator prepares immutable diff row indexes on job completion. File and diff views render only visible rows. Filtering recalculates when the query or observed rows change. Existing debounced filesystem and focus notifications drive external refresh. Git requests, parsing and writes run off the render thread. A 15-second process CPU sample after the complete native flow stayed at 0.00% on each of isolated Wayland and XWayland with Intel Vulkan. This spot check retains the established sub-1% idle CPU target. It does not replace the longer measurement protocol. Local results are in `target/stage04-evidence/`.
+
+[Changes and Commits](CHANGES_AND_COMMITS.md)

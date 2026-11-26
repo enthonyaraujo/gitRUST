@@ -147,7 +147,7 @@ pub(crate) fn commits(mut bytes: &[u8], ids: Vec<ObjectId>) -> Result<Vec<Commit
     Ok(commits)
 }
 
-fn parse_commit(id: ObjectId, bytes: &[u8]) -> Result<CommitInfo, GitError> {
+pub(crate) fn parse_commit(id: ObjectId, bytes: &[u8]) -> Result<CommitInfo, GitError> {
     let boundary = bytes
         .windows(2)
         .position(|pair| pair == b"\n\n")
