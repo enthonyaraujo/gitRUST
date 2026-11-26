@@ -55,6 +55,29 @@ impl From<io::Error> for StorageError {
     }
 }
 
+/// Public numeric account associations keyed by canonical local workspace path.
+pub type GithubBindings = std::collections::BTreeMap<PathBuf, u64>;
+
+fn valid_client(client: &str) -> bool {
+    client.len() <= 100
+        && client
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
+fn push_github_path(output: &mut Vec<u8>, bytes: &[u8]) -> Result<(), StorageError> {
+    if bytes.len() > MAX_PATH_BYTES {
+        return Err(StorageError::Invalid);
+    }
+    output.extend(
+        u16::try_from(bytes.len())
+            .map_err(|_| StorageError::Invalid)?
+            .to_le_bytes(),
+    );
+    output.extend(bytes);
+    Ok(())
+}
+
 /// Native per-user local settings and workspace storage.
 #[derive(Debug)]
 pub struct Store {
@@ -135,6 +158,69 @@ impl Store {
         });
         bytes.extend(value.scale_percent.to_le_bytes());
         write_atomic(&self.preferences, &bytes)
+    }
+
+    /// Read the public GitHub client ID and workspace account associations.
+    ///
+    /// # Errors
+    /// Rejects malformed data.
+    pub fn load_github(&self) -> Result<(String, GithubBindings), StorageError> {
+        let Some(bytes) = read(&self.recent.with_file_name("github.bin"))? else {
+            return Ok((String::new(), GithubBindings::new()));
+        };
+        let mut input = body(&bytes, b'G')?;
+        let size = usize::from(take_u16(&mut input)?);
+        let (client, tail) = input.split_at_checked(size).ok_or(StorageError::Invalid)?;
+        let client = std::str::from_utf8(client).map_err(|_| StorageError::Invalid)?;
+        if !valid_client(client) {
+            return Err(StorageError::Invalid);
+        }
+        input = tail;
+        let count = usize::from(take_u16(&mut input)?);
+        let mut bindings = GithubBindings::new();
+        for _ in 0..count {
+            let size = usize::from(take_u16(&mut input)?);
+            let (path, tail) = input.split_at_checked(size).ok_or(StorageError::Invalid)?;
+            let path = decode_path(path)?;
+            let (id, tail) = tail.split_at_checked(8).ok_or(StorageError::Invalid)?;
+            let id = u64::from_le_bytes(id.try_into().map_err(|_| StorageError::Invalid)?);
+            if !path.is_absolute() || id == 0 || bindings.insert(path, id).is_some() {
+                return Err(StorageError::Invalid);
+            }
+            input = tail;
+        }
+        if !input.is_empty() {
+            return Err(StorageError::Invalid);
+        }
+        Ok((client.to_owned(), bindings))
+    }
+
+    /// Save only the public Client ID and numeric account associations.
+    ///
+    /// # Errors
+    /// Rejects invalid identifiers or paths and reports filesystem failures.
+    pub fn save_github(&self, client: &str, bindings: &GithubBindings) -> Result<(), StorageError> {
+        if !valid_client(client) {
+            return Err(StorageError::Invalid);
+        }
+        let mut bytes = header(b'G');
+        push_github_path(&mut bytes, client.as_bytes())?;
+        bytes.extend(
+            u16::try_from(bindings.len())
+                .map_err(|_| StorageError::Invalid)?
+                .to_le_bytes(),
+        );
+        for (path, id) in bindings {
+            if !path.is_absolute() || *id == 0 {
+                return Err(StorageError::Invalid);
+            }
+            push_github_path(&mut bytes, &encode_path(path)?)?;
+            bytes.extend(id.to_le_bytes());
+        }
+        if bytes.len() > MAX_BYTES {
+            return Err(StorageError::Invalid);
+        }
+        write_atomic(&self.recent.with_file_name("github.bin"), &bytes)
     }
 
     /// Load only the repository paths and selection history.
