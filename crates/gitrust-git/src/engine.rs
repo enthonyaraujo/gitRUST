@@ -1,3 +1,5 @@
+#[path = "navigation.rs"]
+mod navigation;
 #[path = "provision.rs"]
 mod provision;
 #[path = "write.rs"]
@@ -16,6 +18,8 @@ use std::{
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
+
+pub use navigation::{CommitDetails, CommitFile};
 
 use crate::{
     BranchList, DiffTarget, GitError, GitExecutable, HeadState, History, HistoryPage, Inspection,
@@ -102,6 +106,8 @@ pub enum TaskValue {
     Changed(Option<ObjectId>),
     /// History page.
     History(History),
+    /// Commit details and file statistics.
+    CommitDetails(crate::CommitDetails),
     /// Branch snapshot.
     Branches(BranchList),
 }
@@ -569,17 +575,23 @@ impl Runner<'_> {
             Inspection::History(page) => self
                 .history(location, head()?, *page, width)
                 .map(TaskValue::History),
-            Inspection::Branches => {
-                let head = head()?;
-                let spec = GitCommandSpec::new(Builtin::ForEachRef).args([
-                    "--format=%(refname)%00%(objectname)%00%(upstream)%00",
-                    "--",
-                    "refs/heads/",
-                    "refs/remotes/",
-                ]);
-                let data = self.record(location, spec, &[], false)?;
-                BranchList::parse(head, data, width).map(TaskValue::Branches)
+            Inspection::AnchoredHistory(root, page) => {
+                self.require_commit(location, root, width)?;
+                self.history(location, HeadState::Detached(root.clone()), *page, width)
+                    .map(TaskValue::History)
             }
+            Inspection::RelatedHistory(root, tips, page) => {
+                self.require_commit(location, root, width)?;
+                self.history_page(location, root.clone(), tips, *page, width)
+                    .map(TaskValue::History)
+            }
+            Inspection::Branches => self.branches(trusted, width).map(TaskValue::Branches),
+            Inspection::CommitDetails(id, parent) => self
+                .details(location, id, parent.as_ref(), width)
+                .map(TaskValue::CommitDetails),
+            Inspection::CommitPatch(id, parent, path) => self
+                .commit_patch(location, id, parent.as_ref(), path, width)
+                .map(TaskValue::Change),
         }
     }
 
@@ -670,26 +682,7 @@ impl Runner<'_> {
         width: usize,
         untracked: bool,
     ) -> Result<GitCommandSpec, GitError> {
-        let mut spec = GitCommandSpec::new(Builtin::Diff)
-            .args([
-                "--raw",
-                "-z",
-                "--patch",
-                "--full-index",
-                "--no-color",
-                "--no-ext-diff",
-                "--no-textconv",
-                "--no-relative",
-                "--ignore-submodules=all",
-                "--find-renames",
-                "--diff-filter=u",
-                "--no-indent-heuristic",
-                "--src-prefix=a/",
-                "--dst-prefix=b/",
-                "--diff-algorithm=myers",
-                "--exit-code",
-            ])
-            .arg(format!("--abbrev={width}"));
+        let mut spec = Self::patch_spec(width);
         if untracked {
             let path = path.ok_or(GitError::InvalidArgument("untracked file"))?;
             return Ok(spec
@@ -710,6 +703,29 @@ impl Runner<'_> {
             spec = spec.arg(git_path(path.as_path()));
         }
         Ok(spec)
+    }
+
+    fn patch_spec(width: usize) -> GitCommandSpec {
+        GitCommandSpec::new(Builtin::Diff)
+            .args([
+                "--raw",
+                "-z",
+                "--patch",
+                "--full-index",
+                "--no-color",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-relative",
+                "--ignore-submodules=all",
+                "--find-renames",
+                "--diff-filter=u",
+                "--no-indent-heuristic",
+                "--src-prefix=a/",
+                "--dst-prefix=b/",
+                "--diff-algorithm=myers",
+                "--exit-code",
+            ])
+            .arg(format!("--abbrev={width}"))
     }
 
     fn head(&self, repository: &TrustedRepository, width: usize) -> Result<HeadState, GitError> {
@@ -783,11 +799,33 @@ impl Runner<'_> {
                 });
             }
         };
+        self.history_page(cwd, root, &[], page, width)
+    }
+
+    fn history_page(
+        &mut self,
+        cwd: &Path,
+        root: ObjectId,
+        tips: &[ObjectId],
+        page: HistoryPage,
+        width: usize,
+    ) -> Result<History, GitError> {
+        if tips.len() > crate::model::MAX_RECORDS
+            || tips.iter().any(|id| id.as_str().len() != width)
+        {
+            return Err(GitError::InvalidReference);
+        }
         let spec = GitCommandSpec::new(Builtin::RevList)
+            .arg("--topo-order")
             .arg(format!("--max-count={}", page.limit + 1))
             .arg(format!("--skip={}", page.skip))
-            .args(["--end-of-options", root.as_str(), "--"]);
-        let data = self.record(cwd, spec, &[], false)?;
+            .args(["--stdin", "--"]);
+        let mut input = Vec::with_capacity((tips.len() + 1) * (width + 1));
+        for tip in std::iter::once(&root).chain(tips) {
+            input.extend(tip.as_str().as_bytes());
+            input.push(b'\n');
+        }
+        let data = self.record(cwd, spec, &input, false)?;
         let limit = usize::from(page.limit);
         let mut ids = terminated_lines(data)?
             .take(limit + 2)

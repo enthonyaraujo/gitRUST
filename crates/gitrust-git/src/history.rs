@@ -29,8 +29,21 @@ pub struct CommitInfo {
     pub committer: Signature,
     /// First message line in its original encoding.
     pub subject: Vec<u8>,
+    /// Recognized signature header, with no verification assertion.
+    pub signing: Option<CommitSignature>,
     /// Complete message bytes.
     pub message: Vec<u8>,
+}
+
+/// Signature data present in the commit object.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CommitSignature {
+    /// `OpenPGP` armored signature.
+    OpenPgp,
+    /// SSH armored signature.
+    Ssh,
+    /// A signature in another format.
+    Other,
 }
 
 /// Result of a bounded history page.
@@ -45,6 +58,7 @@ pub struct History {
 }
 
 /// A local branch or remote-tracking ref.
+#[allow(clippy::struct_excessive_bools)] // Symbolic aliases, remote tracking and checkout are independent.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BranchInfo {
     /// Full reference.
@@ -55,6 +69,12 @@ pub struct BranchInfo {
     pub upstream: Option<ReferenceName>,
     /// True for the checked-out branch of this worktree.
     pub current: bool,
+    /// Ahead and behind counts relative to an available local upstream.
+    pub divergence: Option<(u64, u64)>,
+    /// Git reports a checkout in some worktree.
+    pub occupied: bool,
+    /// This reference is symbolic.
+    pub symbolic: bool,
     /// True for a remote-tracking reference.
     pub remote_tracking: bool,
 }
@@ -84,6 +104,9 @@ impl BranchList {
             } else {
                 Some(ReferenceName::full(upstream)?)
             };
+            let tracking = fields.next().ok_or_else(malformed)?;
+            let occupied = !fields.next().ok_or_else(malformed)?.is_empty();
+            let symbolic = !fields.next().ok_or_else(malformed)?.is_empty();
             if fields.next() != Some(b"".as_slice()) || fields.next().is_some() {
                 return Err(malformed());
             }
@@ -95,13 +118,42 @@ impl BranchList {
             branches.push(BranchInfo {
                 name,
                 id,
-                upstream,
                 current,
                 remote_tracking,
+                divergence: if upstream.is_some() && tracking.is_empty() {
+                    Some((0, 0))
+                } else {
+                    divergence(tracking)?
+                },
+                occupied,
+                symbolic,
+                upstream,
             });
         }
         Ok(Self { head, branches })
     }
+}
+
+fn divergence(bytes: &[u8]) -> Result<Option<(u64, u64)>, GitError> {
+    if bytes.is_empty() || bytes == b"[gone]" {
+        return Ok(None);
+    }
+    let values = bytes
+        .strip_prefix(b"[")
+        .and_then(|bytes| bytes.strip_suffix(b"]"))
+        .ok_or_else(malformed)?;
+    let mut counts = (0, 0);
+    for part in values.split(|&byte| byte == b',') {
+        let part = part.strip_prefix(b" ").unwrap_or(part);
+        if let Some(value) = part.strip_prefix(b"ahead ") {
+            counts.0 = decimal(value, "ahead count")?;
+        } else if let Some(value) = part.strip_prefix(b"behind ") {
+            counts.1 = decimal(value, "behind count")?;
+        } else {
+            return Err(malformed());
+        }
+    }
+    Ok(Some(counts))
 }
 
 pub(crate) fn terminated_lines(bytes: &[u8]) -> Result<impl Iterator<Item = &[u8]>, GitError> {
@@ -156,6 +208,7 @@ pub(crate) fn parse_commit(id: ObjectId, bytes: &[u8]) -> Result<CommitInfo, Git
     let mut parents = Vec::new();
     let mut author = None;
     let mut committer = None;
+    let mut signing = None;
     let mut headers = bytes[..boundary].split(|&byte| byte == b'\n');
     let tree = headers
         .next()
@@ -165,6 +218,15 @@ pub(crate) fn parse_commit(id: ObjectId, bytes: &[u8]) -> Result<CommitInfo, Git
     for header in headers {
         if let Some(oid) = header.strip_prefix(b"parent ") {
             parents.push(object(oid, width)?);
+        } else if let Some(raw) = header
+            .strip_prefix(b"gpgsig ")
+            .or_else(|| header.strip_prefix(b"gpgsig-sha256 "))
+        {
+            signing = Some(match raw {
+                b"-----BEGIN PGP SIGNATURE-----" => CommitSignature::OpenPgp,
+                b"-----BEGIN SSH SIGNATURE-----" => CommitSignature::Ssh,
+                _ => CommitSignature::Other,
+            });
         } else if let Some(raw) = header.strip_prefix(b"author ") {
             if author.replace(signature(raw)?).is_some() {
                 return Err(malformed());
@@ -184,6 +246,7 @@ pub(crate) fn parse_commit(id: ObjectId, bytes: &[u8]) -> Result<CommitInfo, Git
         committer: committer.ok_or_else(malformed)?,
         subject: subject.to_vec(),
         message: message.to_vec(),
+        signing,
     })
 }
 

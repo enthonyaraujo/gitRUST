@@ -113,6 +113,14 @@ pub enum Inspection {
     CommitDraft { amend: bool },
     /// A bounded page of commits rooted at HEAD.
     History(HistoryPage),
+    /// A page with a fixed commit root, independent of current HEAD.
+    AnchoredHistory(ObjectId, HistoryPage),
+    /// Walk an immutable set of reference tips with the observed HEAD as anchor.
+    RelatedHistory(ObjectId, std::sync::Arc<[ObjectId]>, HistoryPage),
+    /// Commit metadata and changed files relative to a selected parent.
+    CommitDetails(ObjectId, Option<ObjectId>),
+    /// Textual patch for one listed file of a commit.
+    CommitPatch(ObjectId, Option<ObjectId>, RepoPath),
     /// Local and remote-tracking references.
     Branches,
 }
@@ -146,6 +154,7 @@ impl Request {
 
 pub(crate) enum Builtin {
     Add,
+    HashObject,
     Apply,
     CommitTree,
     Restore,
@@ -170,6 +179,7 @@ impl Builtin {
         match self {
             Self::CatFile => "cat-file",
             Self::Add => "add",
+            Self::HashObject => "hash-object",
             Self::Apply => "apply",
             Self::CommitTree => "commit-tree",
             Self::Restore => "restore",

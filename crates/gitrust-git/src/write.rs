@@ -388,7 +388,11 @@ impl Runner<'_> {
         Ok((draft, amended))
     }
 
-    fn read_commit(&self, cwd: &Path, id: ObjectId) -> Result<(CommitInfo, bool), GitError> {
+    pub(super) fn read_commit(
+        &self,
+        cwd: &Path,
+        id: ObjectId,
+    ) -> Result<(CommitInfo, bool), GitError> {
         let spec = GitCommandSpec::new(Builtin::CatFile).args(["commit", id.as_str()]);
         let output = checked(self.run(Some(cwd), spec, &[], self.limits)?, false)?;
         let signed = output
