@@ -3,7 +3,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use crate::{GitError, ObjectId, TrustedRepository};
+use crate::{CloneRepository, CreateRepository, GitError, ObjectId, TrustedRepository};
 
 /// Future mutation classes are reserved for later stages.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -89,6 +89,8 @@ impl HistoryPage {
 pub enum Inspection {
     /// Current HEAD, canonical paths and object format.
     Info,
+    /// Repository information and basic working tree status, when supported.
+    Workspace,
     /// Porcelain v2 status.
     Status {
         /// Include ignored entries.
@@ -114,18 +116,28 @@ pub enum Request {
     Identify(PathBuf),
     /// Run an allowlisted operation on an explicitly trusted candidate.
     Inspect(TrustedRepository, Inspection),
+    /// Initialize a newly requested workspace with no custom templates.
+    Create(CreateRepository),
+    /// Clone explicitly from a public HTTPS source.
+    Clone(CloneRepository),
 }
 
 impl Request {
     /// The operation determines its own access class.
     #[must_use]
     pub const fn safety_class(&self) -> OperationSafetyClass {
-        OperationSafetyClass::ReadOnly
+        match self {
+            Self::Identify(_) | Self::Inspect(..) => OperationSafetyClass::ReadOnly,
+            Self::Create(_) | Self::Clone(_) => OperationSafetyClass::SerializedWrite,
+        }
     }
 }
 
 pub(crate) enum Builtin {
     CatFile,
+    Clone,
+    Init,
+    ReadTree,
     Config,
     Diff,
     ForEachRef,
@@ -139,6 +151,9 @@ impl Builtin {
     const fn name(self) -> &'static str {
         match self {
             Self::CatFile => "cat-file",
+            Self::Clone => "clone",
+            Self::Init => "init",
+            Self::ReadTree => "read-tree",
             Self::Config => "config",
             Self::Diff => "diff",
             Self::ForEachRef => "for-each-ref",

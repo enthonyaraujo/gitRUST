@@ -45,6 +45,8 @@ pub struct TrustedRepository(RepositoryCandidate);
 /// Verified repository context and the observed HEAD.
 #[derive(Debug, Eq, PartialEq)]
 pub struct RepositoryInfo {
+    /// An endpoint is configured in local metadata. Addresses remain private.
+    pub has_remote: bool,
     /// Canonical root, directories and shared identity.
     pub repository: RepositoryCandidate,
     /// Symbolic, detached or unborn state at the time of observation.
@@ -156,6 +158,16 @@ impl RepositoryCandidate {
             git_dir,
             identity: RepositoryIdentity(common),
         })
+    }
+
+    pub(crate) fn published_worktree(location: PathBuf) -> Self {
+        let git_dir = location.join(".git");
+        Self {
+            worktree: Some(location.clone()),
+            location,
+            identity: RepositoryIdentity(git_dir.clone()),
+            git_dir,
+        }
     }
 
     pub(crate) fn location(&self) -> &Path {
@@ -289,13 +301,7 @@ fn canonical(path: &Path) -> Result<PathBuf, GitError> {
             "network or device path",
         ));
     }
-    let canonical = fs::canonicalize(path).map_err(|e| {
-        if e.kind() == io::ErrorKind::NotFound {
-            GitError::InvalidRepository
-        } else {
-            GitError::io(e)
-        }
-    })?;
+    let canonical = fs::canonicalize(path).map_err(GitError::io)?;
     if !allowed_path(&canonical) {
         return Err(GitError::UnsupportedRepositoryFeature(
             "network or device path",
@@ -434,7 +440,8 @@ fn validate_tree(path: &Path, control: Control<'_>) -> Result<(), GitError> {
     visit(path, 0, control)
 }
 
-pub(crate) fn validate_config(bytes: &[u8]) -> Result<(), GitError> {
+pub(crate) fn validate_config(bytes: &[u8]) -> Result<bool, GitError> {
+    let mut has_remote = false;
     for record in crate::model::records(bytes)? {
         let (key, value) = crate::model::split_once(record, b'\n').unwrap_or((record, &[]));
         if key.starts_with(b"include.") || key.starts_with(b"includeif.") {
@@ -448,6 +455,7 @@ pub(crate) fn validate_config(bytes: &[u8]) -> Result<(), GitError> {
         }
         let safe = match key {
             b"core.repositoryformatversion" => matches!(value, b"0" | b"1"),
+            b"lfs.repositoryformatversion" => value == b"0",
             b"extensions.objectformat" => matches!(value, b"sha1" | b"sha256"),
             b"extensions.worktreeconfig" | b"extensions.preciousobjects" => {
                 matches!(value, b"true" | b"false")
@@ -486,8 +494,9 @@ pub(crate) fn validate_config(bytes: &[u8]) -> Result<(), GitError> {
                 "non-allowlisted local configuration",
             ));
         }
+        has_remote |= !value.is_empty() && section_key(key, b"remote.", &[b"url", b"pushurl"]);
     }
-    Ok(())
+    Ok(has_remote)
 }
 
 fn section_key(key: &[u8], prefix: &[u8], fields: &[&[u8]]) -> bool {

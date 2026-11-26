@@ -11,6 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use gitrust_core::workspaces::{TransferPhase, TransferProgress};
 use process_wrap::std::{ChildWrapper, CommandWrap};
 
 use crate::{GitError, OutputStream, ProcessOutput};
@@ -44,7 +45,19 @@ impl Control<'_> {
 
 pub(crate) const NULL_PATH: &str = "/dev/null";
 
-fn command(executable: &Path, cwd: &Path, args: &[OsString], input: &[u8]) -> Command {
+#[derive(Clone, Copy)]
+pub(crate) enum Policy<'a> {
+    Local,
+    Clone(Option<&'a mpsc::SyncSender<TransferProgress>>),
+}
+
+fn command(
+    executable: &Path,
+    cwd: &Path,
+    args: &[OsString],
+    input: &[u8],
+    policy: Policy<'_>,
+) -> Command {
     let mut cmd = Command::new(executable);
     cmd.env_clear()
         .current_dir(cwd)
@@ -60,7 +73,14 @@ fn command(executable: &Path, cwd: &Path, args: &[OsString], input: &[u8]) -> Co
         .env("GIT_CONFIG_GLOBAL", NULL_PATH)
         .env("GIT_ATTR_NOSYSTEM", "1")
         .env("GIT_OPTIONAL_LOCKS", "0")
-        .env("GIT_ALLOW_PROTOCOL", "")
+        .env(
+            "GIT_ALLOW_PROTOCOL",
+            if matches!(policy, Policy::Clone(_)) {
+                "https"
+            } else {
+                ""
+            },
+        )
         .env("GIT_NO_LAZY_FETCH", "1")
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_LITERAL_PATHSPECS", "1")
@@ -84,6 +104,61 @@ fn collect(stream: impl Read, limit: usize, which: OutputStream) -> Result<Vec<u
         return Err(GitError::OutputLimitExceeded(which));
     }
     Ok(data)
+}
+
+fn progress_line(mut line: &[u8]) -> Option<TransferProgress> {
+    if let Some(rest) = line.strip_prefix(b"remote: ") {
+        line = rest;
+    }
+    let (kind, detail) = crate::model::split_once(line, b':')?;
+    let phase = match kind {
+        b"Counting objects" => TransferPhase::Counting,
+        b"Compressing objects" => TransferPhase::Compressing,
+        b"Receiving objects" => TransferPhase::Receiving,
+        b"Resolving deltas" => TransferPhase::Resolving,
+        _ => return None,
+    };
+    let (number, _) = crate::model::split_once(detail, b'%')?;
+    let percent: u8 = std::str::from_utf8(number).ok()?.trim().parse().ok()?;
+    (percent <= 100).then_some(TransferProgress { phase, percent })
+}
+
+fn collect_progress(
+    stream: impl Read,
+    limit: usize,
+    observer: &mpsc::SyncSender<TransferProgress>,
+) -> Result<Vec<u8>, GitError> {
+    let mut stream = stream.take(u64::try_from(limit).unwrap_or(u64::MAX).saturating_add(1));
+    let mut captured = Vec::new();
+    let mut buffer = [0; 8192];
+    let mut line_start = 0;
+    let mut previous = None;
+    loop {
+        let count = match stream.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(count) => count,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(GitError::io(e)),
+        };
+        let old_length = captured.len();
+        captured.extend_from_slice(&buffer[..count]);
+        if captured.len() > limit {
+            return Err(GitError::OutputLimitExceeded(OutputStream::Stderr));
+        }
+        for (offset, byte) in buffer[..count].iter().enumerate() {
+            if matches!(byte, b'\n' | b'\r') {
+                let end = old_length + offset;
+                if let Some(progress) = progress_line(&captured[line_start..end])
+                    && previous != Some(progress)
+                {
+                    let _ = observer.try_send(progress);
+                    previous = Some(progress);
+                }
+                line_start = end + 1;
+            }
+        }
+    }
+    Ok(captured)
 }
 
 fn stop(child: &mut dyn ChildWrapper) {
@@ -150,9 +225,21 @@ pub(crate) fn run(
     limits: ProcessLimits,
     control: Control<'_>,
 ) -> Result<ProcessOutput, GitError> {
+    run_with_policy(executable, cwd, args, input, limits, control, Policy::Local)
+}
+
+pub(crate) fn run_with_policy(
+    executable: &Path,
+    cwd: &Path,
+    args: &[OsString],
+    input: &[u8],
+    limits: ProcessLimits,
+    control: Control<'_>,
+    policy: Policy<'_>,
+) -> Result<ProcessOutput, GitError> {
     control.check()?;
     let start = Instant::now();
-    let mut wrapped = CommandWrap::from(command(executable, cwd, args, input));
+    let mut wrapped = CommandWrap::from(command(executable, cwd, args, input, policy));
     #[cfg(unix)]
     wrapped.wrap(process_wrap::std::ProcessGroup::leader());
     #[cfg(windows)]
@@ -187,7 +274,12 @@ pub(crate) fn run(
             thread::Builder::new()
                 .name("gitrust-stderr".into())
                 .spawn_scoped(scope, move || {
-                    let result = collect(stderr, limits.stderr, OutputStream::Stderr);
+                    let result = match policy {
+                        Policy::Clone(Some(observer)) => {
+                            collect_progress(stderr, limits.stderr, observer)
+                        }
+                        _ => collect(stderr, limits.stderr, OutputStream::Stderr),
+                    };
                     let _ = err_sender.send(PipeMessage::Output(OutputStream::Stderr, result));
                 })
                 .map_err(GitError::SpawnFailed)?;

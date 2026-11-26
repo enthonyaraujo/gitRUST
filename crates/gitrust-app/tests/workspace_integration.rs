@@ -20,7 +20,7 @@ fn workspace_crates_preserve_stage_00_honesty_and_security_baselines() {
     );
     assert_eq!(
         gitrust_storage::STAGE_STATUS,
-        CrateStageStatus::Planned { target_stage: 3 }
+        CrateStageStatus::Active { stage: 3 }
     );
     assert_eq!(
         gitrust_providers::STAGE_STATUS,

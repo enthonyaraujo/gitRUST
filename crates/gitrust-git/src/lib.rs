@@ -1,6 +1,7 @@
 //! Read-only, local Git inspection with a bounded background executor.
 
 mod command;
+mod creation;
 mod diff;
 mod engine;
 mod executable;
@@ -11,6 +12,7 @@ mod repository;
 mod status;
 
 pub use command::{DiffTarget, HistoryPage, Inspection, OperationSafetyClass, RepoPath, Request};
+pub use creation::{CloneRepository, CloneSource, CreateRepository};
 pub use diff::{DiffFile, DiffHunk, DiffLine, DiffLineKind, RepositoryDiff};
 pub use engine::{
     EngineOptions, GitEngine, GitTask, GitTaskId, GitTaskState, TaskReport, TaskValue,
