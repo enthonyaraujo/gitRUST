@@ -124,3 +124,10 @@ Changes and commits use the existing local trust boundary and serialized write r
 Only explicit signing requests can select a verified system signing executable. Private keys and passphrases remain with that executable. Signer output and key identifiers are excluded from workspace notices. Protected repository operations retain the existing network and hook restrictions.
 
 [ADR 0009](adr/0009-local-changes-and-commits.md)
+
+
+## Stage 05 branches and history
+
+Branch changes use safe Git modes and revalidate full refs and expected commit IDs. Merge requires a clean start, protects ignored files and disables autostash and automatic conflict resolution. Only an in-session state proof permits abort.
+
+[Branches and History](BRANCHES_AND_HISTORY.md) · [ADR 0010](adr/0010-branches-history-and-merge.md)

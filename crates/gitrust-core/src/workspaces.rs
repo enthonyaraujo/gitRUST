@@ -193,6 +193,8 @@ pub enum WorkspaceIssue {
 /// Data consumed by the repository workspace view.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RepositoryView {
+    /// Branches, history and merge state for the active workspace.
+    pub navigation: Option<crate::navigation::NavigationView>,
     /// Active changes workspace, after a real inspection.
     pub changes: Option<crate::changes::ChangesView>,
     /// Saved catalog and selected history.
@@ -224,6 +226,8 @@ pub struct RepositoryView {
 /// Intent sent by the native view to the worker coordinator.
 #[derive(Clone)]
 pub enum RepositoryAction {
+    /// Request a branch, history or merge operation.
+    Navigate(crate::navigation::NavigationIntent),
     /// Dispatch an intent for the active changes workspace.
     Changes(crate::changes::ChangesIntent),
     /// Ask the native platform dialog for a folder.
@@ -262,6 +266,7 @@ impl std::fmt::Debug for RepositoryAction {
         let action = match self {
             Self::Browse => "Browse",
             Self::Changes(_) => "Changes",
+            Self::Navigate(_) => "Navigate",
             Self::BrowseDestination => "BrowseDestination",
             Self::Open(_) => "Open",
             Self::Authorize { .. } => "Authorize",

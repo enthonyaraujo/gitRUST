@@ -91,3 +91,10 @@ The 16 local integration tests passed with the system Git 2.56.1 and with Git 2.
 Whole-file path lists are passed as NUL-framed literal operands. Partial changes use the same bytes for validation and application. Signed and unsigned commits use explicit identity, and ref publication checks the previous object ID. The engine reports a completed Git ref/index publication even if the cancellation flag arrives afterward. The coordinator refreshes the workspace on every terminal mutation outcome.
 
 [Changes and Commits](CHANGES_AND_COMMITS.md) · [ADR 0009](adr/0009-local-changes-and-commits.md)
+
+
+## Stage 05 branches and history
+
+Stage 05 adds immutable history anchors, parent and root comparisons, local reference mutations and single-source merges. The engine retains exclusive mutation access by common Git directory and reuses the preflight, process supervision, and signing policy.
+
+[Branches and History](BRANCHES_AND_HISTORY.md) · [ADR 0010](adr/0010-branches-history-and-merge.md)

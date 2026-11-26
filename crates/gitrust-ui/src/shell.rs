@@ -1,5 +1,6 @@
 mod changes;
 mod dialogs;
+mod navigation;
 mod repositories;
 
 use repositories::{FormKind, ManagerUi};
@@ -318,10 +319,17 @@ impl Desktop {
                 self.compact_detail = false;
                 self.focus_search = true;
             }
-            if self.screen == Screen::Demo
-                && let Some(tab) = tab_shortcut(ui)
-            {
-                self.switch_tab(tab);
+            if let Some(tab) = tab_shortcut(ui) {
+                if self.screen == Screen::Demo {
+                    self.switch_tab(tab);
+                } else if self.screen == Screen::Workspace
+                    && let Some(managed) = &mut self.managed
+                {
+                    managed.navigation.tab = match tab {
+                        Tab::History => navigation::Tab::History,
+                        Tab::Changes => navigation::Tab::Changes,
+                    };
+                }
             }
             if compact && shortcut(ui, Modifiers::NONE, Key::Escape) {
                 self.compact_detail = false;
@@ -390,7 +398,7 @@ impl Desktop {
                             Text::Branch,
                             Text::Help,
                         ] {
-                            ui.menu_button(l.text(menu), |ui| self.menu(ui, menu, l, events));
+                            ui.menu_button(l.text(menu), |ui| self.menu(ui, menu, p, l, events));
                         }
                     };
                     if ui.available_width() < 410.0 {
@@ -402,7 +410,7 @@ impl Desktop {
             });
     }
 
-    fn menu(&mut self, ui: &mut Ui, menu: Text, l: Language, events: &mut FrameEvents) {
+    fn menu(&mut self, ui: &mut Ui, menu: Text, p: Palette, l: Language, events: &mut FrameEvents) {
         match menu {
             Text::File => {
                 if let Some(managed) = &mut self.managed {
@@ -487,6 +495,12 @@ impl Desktop {
                             ui.close();
                         }
                     }
+                } else if let Some(managed) = self
+                    .managed
+                    .as_mut()
+                    .filter(|managed| managed.view.active.is_some())
+                {
+                    managed.branch_popup(ui, l, p);
                 } else {
                     unavailable(ui, l, Text::NoBranch);
                 }
@@ -575,7 +589,12 @@ impl Desktop {
                 .as_ref()
                 .filter(|_| self.screen == Screen::Demo)
                 .map(|demo| demo.branch);
-            if !compact || (branch.is_some() && ui.available_width() > 156.0) {
+            let real_branch = self.screen == Screen::Workspace
+                && self
+                    .managed
+                    .as_ref()
+                    .is_some_and(|managed| managed.view.active.is_some());
+            if !compact || ((branch.is_some() || real_branch) && ui.available_width() > 156.0) {
                 ui.separator();
                 let response =
                     c::context_button(
@@ -594,7 +613,7 @@ impl Desktop {
                             },
                             |i| BRANCHES[i],
                         ),
-                        branch.is_some(),
+                        branch.is_some() || real_branch,
                         p,
                     );
                 if let Some(branch) = branch {
@@ -612,6 +631,10 @@ impl Desktop {
                             }
                         }
                     });
+                } else if let Some(managed) = self.managed.as_mut().filter(|_| real_branch) {
+                    egui::Popup::menu(&response)
+                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                        .show(|ui| managed.branch_popup(ui, l, p));
                 }
             }
             if !compact && ui.available_width() > 212.0 {

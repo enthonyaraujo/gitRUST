@@ -59,3 +59,10 @@ Interactive launches show the real repository workspace, with a searchable Repos
 The active workspace uses the Stage 01 diff viewport for worker-indexed real patches. Rows are keyed by path and comparison layer, and the coordinator ties results to a version of the authorized repository. File and diff rows are virtualized. The same controls back the compact tabs and the wide layout. The compositor holds editable text locally until a mutation succeeds and clears the submitted draft only when that commit is confirmed. Discard and amend show native confirmation dialogs. The AccessKit tree exposes file selection, hunk and line selection, the diff viewport and labeled commit fields.
 
 [Changes and Commits](CHANGES_AND_COMMITS.md)
+
+
+## Stage 05 branches and history
+
+The Branch selector keeps native path and reference identity separate from display labels. History virtualizes graph-aligned commit rows and the commit inspector reuses Unified and Split diffs. Compact tabs keep the history list, metadata and diff reachable at high zoom.
+
+[Branches and History](BRANCHES_AND_HISTORY.md) · [ADR 0010](adr/0010-branches-history-and-merge.md)

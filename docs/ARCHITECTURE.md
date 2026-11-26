@@ -86,3 +86,10 @@ The shell sends the repository actions defined in gitrust-core to an application
 `gitrust-core` defines file/layer identity, immutable display projections and versioned intents. `gitrust-ui` renders the actual Changes workspace and sends intents. `gitrust-app` retains the opaque patch and pending approval on the workspace coordinator and reconciles mutating jobs through the existing notification channel. `gitrust-git` owns command construction, exact bytes, locks and trust checks. This path adds no dependency edges.
 
 [Changes and Commits](CHANGES_AND_COMMITS.md) · [ADR 0009](adr/0009-local-changes-and-commits.md)
+
+
+## Stage 05 branches and history
+
+The app coordinator builds bounded graph rows from paged Git objects. The shared domain represents reference choices, commit summaries and merge state. The UI paints the graph with egui and uses the existing diff viewport.
+
+[Branches and History](BRANCHES_AND_HISTORY.md) · [ADR 0010](adr/0010-branches-history-and-merge.md)

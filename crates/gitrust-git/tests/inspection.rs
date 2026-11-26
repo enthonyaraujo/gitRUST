@@ -1703,3 +1703,6 @@ mod writes {
         assert_ne!(f.oid("HEAD"), old);
     }
 }
+
+#[path = "support/navigation.rs"]
+mod navigation;

@@ -110,7 +110,7 @@ pub(super) struct ManagerUi {
     pub(super) view: RepositoryView,
     query: String,
     changes: super::changes::ChangesUi,
-    overview: bool,
+    pub(super) navigation: super::navigation::NavigationUi,
     form: Option<Form>,
     action: Option<RepositoryAction>,
 }
@@ -223,47 +223,93 @@ impl ManagerUi {
             });
     }
 
+    pub(super) fn branch_popup(&mut self, ui: &mut Ui, l: Language, p: Palette) {
+        if let Some(view) = self.view.navigation.as_ref() {
+            if let Some(action) =
+                self.navigation
+                    .branch_picker(ui, view, self.view.changes.is_some(), l, p)
+            {
+                self.action = Some(RepositoryAction::Navigate(action));
+            }
+        } else {
+            ui.label(l.local("Loading local branches…", "Carregando branches locais…"));
+        }
+    }
+
     fn real_changes(&mut self, ui: &mut Ui, p: Palette, l: Language) -> bool {
-        if let Some(changes) = self.view.changes.as_ref()
-            && let Some(workspace) = self.view.active.as_ref()
-        {
-            ui.horizontal_wrapped(|ui| {
-                c::tabs(
-                    ui,
-                    &mut self.overview,
-                    &[
-                        (false, l.text(Text::Changes)),
-                        (true, l.local("Overview", "Visão geral")),
-                    ],
-                    p,
-                );
-                if changes.busy {
-                    c::loading(ui, l.local("Working…", "Processando…"), None);
-                    if ui.button(l.text(Text::Cancel)).clicked() {
-                        self.action = Some(RepositoryAction::Cancel);
-                    }
-                } else if let Some((success, message)) = super::changes::notice(changes, l) {
-                    ui.colored_label(if success { p.success } else { p.warning }, message);
+        use super::navigation::Tab;
+        let Some(workspace) = self.view.active.as_ref() else {
+            return false;
+        };
+        let changes = self.view.changes.as_ref();
+        let navigation = self.view.navigation.as_ref();
+        if changes.is_none() && navigation.is_none() {
+            return false;
+        }
+        if changes.is_none() && self.navigation.tab == Tab::Changes {
+            self.navigation.tab = Tab::History;
+        }
+        ui.horizontal_wrapped(|ui| {
+            let tabs = [
+                (Tab::Changes, l.text(Text::Changes)),
+                (Tab::History, l.text(Text::History)),
+                (Tab::Overview, l.local("Overview", "Visão geral")),
+            ];
+            c::tabs(
+                ui,
+                &mut self.navigation.tab,
+                if changes.is_some() { &tabs } else { &tabs[1..] },
+                p,
+            );
+            if changes.is_some_and(|changes| changes.busy)
+                || navigation.is_some_and(|view| view.busy)
+            {
+                c::loading(ui, l.local("Working…", "Processando…"), None);
+                if ui.button(l.text(Text::Cancel)).clicked() {
+                    self.action = Some(RepositoryAction::Cancel);
                 }
-            });
-            if !self.overview {
+            } else if let Some((success, message)) =
+                changes.and_then(|changes| super::changes::notice(changes, l))
+                && self.navigation.tab == Tab::Changes
+            {
+                ui.colored_label(if success { p.success } else { p.warning }, message);
+            }
+        });
+        if let Some(view) = navigation {
+            self.navigation.status(ui, view, l, p);
+            if let Some(action) = self.navigation.dialog(ui, view, &workspace.checkout, l, p) {
+                self.action = Some(RepositoryAction::Navigate(action));
+            }
+        }
+        match self.navigation.tab {
+            Tab::Overview => return false,
+            Tab::History => {
+                if let Some(view) = navigation
+                    && let Some(action) = self.navigation.history(ui, view, changes.is_some(), l, p)
+                {
+                    self.action = Some(RepositoryAction::Navigate(action));
+                }
+            }
+            Tab::Changes => {
                 if let Some(issue) = self.view.issue {
                     ui.colored_label(p.error, issue_text(l, issue));
                 }
-                if let Some(intent) = self.changes.show(
-                    ui,
-                    workspace,
-                    changes,
-                    self.view.activity == Activity::Idle,
-                    l,
-                    p,
-                ) {
+                if let Some(changes) = changes
+                    && let Some(intent) = self.changes.show(
+                        ui,
+                        workspace,
+                        changes,
+                        self.view.activity == Activity::Idle
+                            && navigation.is_none_or(|view| !view.busy),
+                        l,
+                        p,
+                    )
+                {
                     self.action = Some(RepositoryAction::Changes(intent));
                 }
-                return true;
             }
         }
-        false
+        true
     }
 
     fn summary(
@@ -656,6 +702,11 @@ impl Desktop {
     /// Replace the repository presentation snapshot.
     pub fn set_repository_view(&mut self, view: RepositoryView) {
         if let Some(managed) = &mut self.managed {
+            if managed.view.navigation.as_ref().map(|nav| nav.identity)
+                != view.navigation.as_ref().map(|nav| nav.identity)
+            {
+                managed.navigation = super::navigation::NavigationUi::default();
+            }
             managed.view = view;
         }
     }

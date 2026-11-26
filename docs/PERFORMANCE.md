@@ -299,3 +299,10 @@ The reviewed Linux release completed 18 process measurements of 60 seconds on In
 The coordinator prepares immutable diff row indexes on job completion. File and diff views render only visible rows. Filtering recalculates when the query or observed rows change. Existing debounced filesystem and focus notifications drive external refresh. Git requests, parsing and writes run off the render thread. A 15-second process CPU sample after the complete native flow stayed at 0.00% on each of isolated Wayland and XWayland with Intel Vulkan. This spot check retains the established sub-1% idle CPU target. It does not replace the longer measurement protocol. Local results are in `target/stage04-evidence/`.
 
 [Changes and Commits](CHANGES_AND_COMMITS.md)
+
+
+## Stage 05 branches and history
+
+History loads topological pages of 80 commits and bounds the view at 8,000 rows. Workers prepare graph lanes, while rendering visits only visible rows. Diff content is requested by selected file. Watches and completion notifications remain event-driven.
+
+[Branches and History](BRANCHES_AND_HISTORY.md) · [ADR 0010](adr/0010-branches-history-and-merge.md)

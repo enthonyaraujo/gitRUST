@@ -277,6 +277,14 @@ pub enum GitError {
     MalformedOutput(&'static str),
     /// A repository lock was present. The engine did not remove it.
     RepositoryLocked,
+    /// A branch is checked out in this or another worktree.
+    BranchOccupied,
+    /// The branch has commits outside the current history.
+    BranchUnmerged,
+    /// A safe checkout could not be performed.
+    BranchSwitchBlocked,
+    /// A merge requires a clean index and working tree.
+    MergeDirty,
     /// The repository uses a feature outside the Stage 02 policy.
     UnsupportedRepositoryFeature(&'static str),
     /// The metadata violates the local-only inspection policy.
@@ -326,6 +334,12 @@ impl fmt::Display for GitError {
             }
             Self::MalformedOutput(kind) => write!(f, "malformed Git output: {kind}"),
             Self::RepositoryLocked => f.write_str("Git repository is locked"),
+            Self::BranchOccupied => f.write_str("Branch is checked out in a worktree"),
+            Self::BranchUnmerged => f.write_str("Branch contains commits not integrated into HEAD"),
+            Self::BranchSwitchBlocked => {
+                f.write_str("Git prevented a checkout to preserve local state")
+            }
+            Self::MergeDirty => f.write_str("Merge requires a clean index and working tree"),
             Self::UnsupportedRepositoryFeature(feature) => {
                 write!(f, "unsupported repository feature: {feature}")
             }

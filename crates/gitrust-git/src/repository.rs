@@ -312,6 +312,14 @@ impl TrustedRepository {
         Ok(config)
     }
 
+    pub(crate) fn validate_worktrees(&self, control: Control<'_>) -> Result<(), GitError> {
+        let worktrees = self.0.identity.common_dir().join("worktrees");
+        if metadata(&worktrees)?.is_some() {
+            validate_tree(&worktrees, control)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn validate_reflogs(&self, control: Control<'_>) -> Result<(), GitError> {
         let git_dir = self.0.git_dir();
         let common = self.0.identity.common_dir();

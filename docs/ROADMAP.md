@@ -12,8 +12,8 @@ This document defines the staged engineering plan for **gitRUST**. Each stage ha
 | **01** | Design System | Completed | Yes |
 | **02** | Git Engine | Completed and integrated | Yes |
 | **03** | Repository Management | Completed on Linux and integrated | Yes |
-| **04** | Changes and Commits | Local implementation under review | Yes |
-| **05** | Branches and History | Planned | Yes |
+| **04** | Changes and Commits | Completed on Linux and integrated | Yes |
+| **05** | Branches and History | Local implementation under review | Yes |
 | **06** | Remote Operations | Planned | Yes |
 | **07** | Cross-Platform Validation | Planned (release gate) | Yes |
 | **08** | Advanced Git Operations | Planned | Post-`v0.1.0` |
@@ -51,12 +51,12 @@ This document defines the staged engineering plan for **gitRUST**. Each stage ha
 ### Stage 04 — Changes and Commits
 - Working tree and index inspection (staged, unstaged, untracked, conflicted, and renamed files).
 - Unified and split diff viewer with virtualized rendering for large diffs and binary file indicators.
-- File-level and hunk/line-level staging and unstaging, reviewed discard, commit authoring, amend, and explicit OpenPGP and SSH signing. [Changes and Commits](CHANGES_AND_COMMITS.md) · [ADR 0009](adr/0009-local-changes-and-commits.md)
+- File-level and hunk/line-level staging and unstaging, reviewed discard, commit authoring, amend, and explicit OpenPGP and SSH signing. [Changes and Commits](CHANGES_AND_COMMITS.md) · [ADR 0009](adr/0009-local-changes-and-commits.md) · [Integration](https://github.com/enthonyaraujo/gitRUST/pull/10)
 
 ### Stage 05 — Branches and History
 - Local and remote-tracking branch listing, creation, switching, renaming, and safe deletion.
 - Paginated/virtualized commit history list and commit detail inspector (changed files, author/committer metadata, parent links, diffs).
-- Basic merge workflows and clear conflict state detection.
+- Basic merge workflows and clear conflict state detection. [Branches and History](BRANCHES_AND_HISTORY.md) · [ADR 0010](adr/0010-branches-history-and-merge.md)
 
 ### Stage 06 — Remote Operations
 - Remote configuration inspection (`origin` and additional remotes).

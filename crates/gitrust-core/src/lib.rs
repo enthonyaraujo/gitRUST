@@ -6,6 +6,7 @@
 //! basic lifecycle events.
 
 pub mod changes;
+pub mod navigation;
 pub mod workspaces;
 
 /// Official user-facing product name.
