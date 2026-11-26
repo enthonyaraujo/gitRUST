@@ -1,0 +1,956 @@
+//! Real Git fixtures. Every mutation is confined to an isolated temporary root.
+#![allow(clippy::expect_used)]
+
+use std::{
+    ffi::OsStr,
+    fs,
+    path::{Path, PathBuf},
+    process::{Command, Output},
+    sync::OnceLock,
+};
+
+use gitrust_git::{
+    DiffLineKind, DiffTarget, EngineOptions, EntryKind, FileChange, GitEngine, GitError,
+    GitExecutable, GitTaskState, HeadState, HistoryPage, Inspection, ObjectId, OutputStream,
+    ReferenceName, RepoPath, RepositoryCandidate, RepositoryDiff, RepositoryStatus, Request,
+    TaskReport, TaskValue, TrustedRepository,
+};
+use tempfile::TempDir;
+
+fn executable() -> &'static GitExecutable {
+    static GIT: OnceLock<GitExecutable> = OnceLock::new();
+    GIT.get_or_init(|| {
+        GitExecutable::discover().expect("native Git 2.45+ is required for integration tests")
+    })
+}
+
+fn engine(options: EngineOptions) -> GitEngine {
+    GitEngine::new(executable().clone(), options).expect("start executor")
+}
+
+fn fixture_command(path: &Path) -> Command {
+    let mut command = Command::new(executable().path());
+    command
+        .current_dir(path)
+        .env_clear()
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_ALLOW_PROTOCOL", "")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("LC_ALL", "C")
+        .args([
+            "-c",
+            "user.name=Stage Two",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "-c",
+            "core.autocrlf=false",
+            "-c",
+            "commit.gpgSign=false",
+        ]);
+    #[cfg(windows)]
+    for var in ["SystemRoot", "WINDIR"] {
+        if let Some(value) = std::env::var_os(var) {
+            command.env(var, value);
+        }
+    }
+    command
+}
+
+struct Fixture(TempDir);
+
+impl Fixture {
+    fn new(arguments: &[&str]) -> Self {
+        let root = Self(
+            tempfile::Builder::new()
+                .prefix("gitRUST fixtures á ")
+                .tempdir()
+                .expect("temporary repository"),
+        );
+        let mut init = vec!["init", "--quiet", "--initial-branch=main"];
+        init.extend_from_slice(arguments);
+        root.git(init);
+        root
+    }
+
+    fn path(&self) -> &Path {
+        self.0.path()
+    }
+
+    fn git(&self, args: impl IntoIterator<Item = impl AsRef<OsStr>>) -> Output {
+        let output = fixture_command(self.path())
+            .args(args)
+            .output()
+            .expect("fixture Git starts");
+        assert!(
+            output.status.success(),
+            "fixture command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output
+    }
+
+    fn write(&self, name: impl AsRef<Path>, contents: impl AsRef<[u8]>) {
+        fs::write(self.path().join(name), contents).expect("fixture write");
+    }
+
+    fn commit(&self, description: &str) -> ObjectId {
+        self.git(["add", "--all", "--"]);
+        self.git(["commit", "--quiet", "--allow-empty", "-m", description]);
+        self.oid("HEAD")
+    }
+
+    fn oid(&self, reference: &str) -> ObjectId {
+        let output = self.git(["rev-parse", "--verify", "--end-of-options", reference]);
+        ObjectId::new(
+            std::str::from_utf8(&output.stdout)
+                .expect("ASCII Git ID")
+                .trim(),
+        )
+        .expect("complete object ID")
+    }
+}
+
+fn submit(engine: &GitEngine, request: Request) -> TaskReport {
+    let task = engine.submit(request).expect("enqueue");
+    let id = task.id();
+    let report = task.wait().expect("receive");
+    assert_eq!(report.id, id);
+    report
+}
+
+fn identify(engine: &GitEngine, path: &Path) -> RepositoryCandidate {
+    let Ok(TaskValue::Identified(candidate)) =
+        submit(engine, Request::Identify(path.to_owned())).result
+    else {
+        panic!("fixture not identified");
+    };
+    candidate
+}
+
+fn trust(engine: &GitEngine, path: &Path) -> TrustedRepository {
+    identify(engine, path).authorize_local_metadata()
+}
+
+fn inspect(engine: &GitEngine, repo: &TrustedRepository, operation: Inspection) -> TaskValue {
+    submit(engine, Request::Inspect(repo.clone(), operation))
+        .result
+        .expect("Git inspection succeeds")
+}
+
+fn status(engine: &GitEngine, repo: &TrustedRepository, include_ignored: bool) -> RepositoryStatus {
+    let TaskValue::Status(value) = inspect(engine, repo, Inspection::Status { include_ignored })
+    else {
+        panic!("expected status");
+    };
+    value
+}
+
+fn diff(
+    engine: &GitEngine,
+    repo: &TrustedRepository,
+    target: DiffTarget,
+    path: Option<RepoPath>,
+) -> RepositoryDiff {
+    let report = submit(
+        engine,
+        Request::Inspect(repo.clone(), Inspection::Diff { target, path }),
+    );
+    let TaskValue::Diff(value) = report.result.expect("diff succeeds") else {
+        panic!("expected diff");
+    };
+    assert_eq!(
+        report
+            .processes
+            .first()
+            .expect("raw diff available")
+            .status
+            .code(),
+        Some(i32::from(!value.files.is_empty()))
+    );
+    value
+}
+
+fn key_files(repo: &TrustedRepository) -> [PathBuf; 4] {
+    let candidate = repo.repository();
+    let common = candidate.identity().common_dir();
+    [
+        candidate.git_dir().join("index"),
+        candidate.git_dir().join("HEAD"),
+        common.join("config"),
+        common.join("refs/heads/main"),
+    ]
+}
+
+#[test]
+fn empty_clean_and_dirty_status_preserves_index_config_refs_and_files() {
+    let fixture = Fixture::new(&[]);
+    let engine = engine(EngineOptions::default());
+    let repo = trust(&engine, fixture.path());
+    let TaskValue::Info(unborn) = inspect(&engine, &repo, Inspection::Info) else {
+        panic!("expected info");
+    };
+    assert!(
+        matches!(unborn.head, HeadState::Unborn(branch) if branch.as_bytes() == b"refs/heads/main")
+    );
+    assert!(status(&engine, &repo, false).branch.oid.is_none());
+    assert_eq!(diff(&engine, &repo, DiffTarget::Index, None).files, []);
+    let TaskValue::History(empty) = inspect(
+        &engine,
+        &repo,
+        Inspection::History(HistoryPage::new(0, 10).expect("valid page")),
+    ) else {
+        panic!("expected history");
+    };
+    assert_eq!(empty.commits, []);
+
+    fixture.write("tracked", "base\n");
+    fixture.write("removed", "removed\n");
+    fixture.write(".gitignore", "*.ignored\n");
+    let commit = fixture.commit("first");
+    assert_eq!(status(&engine, &repo, false).entries, []);
+    fixture.write("tracked", "staged\n");
+    fixture.write("new file", "added\n");
+    fixture.git(["add", "--", "tracked", "new file"]);
+    fixture.write("tracked", "working\n");
+    fs::remove_file(fixture.path().join("removed")).expect("fixture deletion");
+    fixture.write("untracked", "local\n");
+    fixture.write("local.ignored", "ignored\n");
+
+    let files = key_files(&repo);
+    let contents = files
+        .each_ref()
+        .map(|path| fs::read(path).expect("snapshot metadata"));
+    let changes = status(&engine, &repo, true);
+    assert_eq!(changes.branch.oid, Some(commit));
+    assert!(
+        changes
+            .entries
+            .iter()
+            .any(|entry| entry.path.as_bytes() == b"tracked"
+                && entry.index == Some(FileChange::Modified)
+                && entry.worktree == Some(FileChange::Modified))
+    );
+    assert!(
+        changes
+            .entries
+            .iter()
+            .any(|entry| entry.path.as_bytes() == b"removed"
+                && entry.worktree == Some(FileChange::Deleted))
+    );
+    assert!(changes.entries.iter().any(
+        |entry| entry.path.as_bytes() == b"new file" && entry.index == Some(FileChange::Added)
+    ));
+    assert!(
+        changes
+            .entries
+            .iter()
+            .any(|entry| entry.kind == EntryKind::Untracked)
+    );
+    assert!(
+        changes
+            .entries
+            .iter()
+            .any(|entry| entry.kind == EntryKind::Ignored)
+    );
+    assert!(
+        !status(&engine, &repo, false)
+            .entries
+            .iter()
+            .any(|entry| entry.kind == EntryKind::Ignored)
+    );
+    assert_eq!(
+        files
+            .each_ref()
+            .map(|path| fs::read(path).expect("verify metadata")),
+        contents
+    );
+    assert_eq!(
+        fs::read(fixture.path().join("tracked")).expect("worktree file"),
+        b"working\n"
+    );
+    assert!(!repo.repository().git_dir().join("index.lock").exists());
+}
+
+#[test]
+fn staged_and_worktree_patches_have_binary_rename_mode_line_and_literal_path_metadata() {
+    let fixture = Fixture::new(&[]);
+    fixture.write("before.txt", "a\nb\nc\n");
+    fixture.write("text", b"first\nold\r\nlast");
+    fixture.write("binary", [0, 1, 2]);
+    fixture.write("-dash", "first\n");
+    let first = fixture.commit("base");
+    fixture.git(["mv", "--", "before.txt", "after name.txt"]);
+    fixture.write("binary", [0, 1, 3]);
+    fixture.write("text", b"first\nnew\r\nfinal");
+    fixture.write("-dash", "second\n");
+    fixture.git(["update-index", "--chmod=+x", "--", "-dash"]);
+    let engine = engine(EngineOptions::default());
+    let repo = trust(&engine, fixture.path());
+    let staged = diff(&engine, &repo, DiffTarget::Index, None);
+    assert!(staged.files.iter().any(|file| {
+        file.path.as_bytes() == b"after name.txt"
+            && file
+                .from
+                .as_ref()
+                .is_some_and(|from| from.as_bytes() == b"before.txt")
+            && file.change == FileChange::Renamed
+            && file.score == Some(100)
+    }));
+    assert!(
+        staged
+            .files
+            .iter()
+            .any(|file| file.path.as_bytes() == b"-dash" && file.modes == [0o100_644, 0o100_755])
+    );
+    assert!(status(&engine, &repo, false).entries.iter().any(|entry|
+        matches!(&entry.kind, EntryKind::RenamedOrCopied { from, similarity: 100 } if from.as_bytes() == b"before.txt")));
+    let unstaged = diff(&engine, &repo, DiffTarget::Worktree, None);
+    assert!(
+        unstaged
+            .files
+            .iter()
+            .any(|file| file.path.as_bytes() == b"binary" && file.binary)
+    );
+    let text = unstaged
+        .files
+        .iter()
+        .find(|file| file.path.as_bytes() == b"text")
+        .expect("text diff");
+    let hunk = text.hunks.first().expect("one hunk");
+    assert_eq!(hunk.old, (1, 3));
+    assert!(
+        hunk.lines
+            .iter()
+            .any(|line| line.kind == DiffLineKind::Context && line.new_line == Some(1))
+    );
+    assert!(
+        hunk.lines
+            .iter()
+            .any(|line| line.kind == DiffLineKind::Removed
+                && line.old_line == Some(2)
+                && line.content == b"old\r")
+    );
+    assert!(
+        hunk.lines
+            .iter()
+            .any(|line| line.kind == DiffLineKind::Added
+                && line.content == b"final"
+                && !line.has_newline)
+    );
+    let path = RepoPath::new(PathBuf::from("-dash")).expect("literal path");
+    let one = diff(&engine, &repo, DiffTarget::Worktree, Some(path));
+    assert_eq!(one.files.len(), 1);
+    assert_eq!(one.files[0].path.as_bytes(), b"-dash");
+    let final_id = fixture.commit("edited");
+    let between = diff(
+        &engine,
+        &repo,
+        DiffTarget::Between {
+            old: first,
+            new: final_id,
+        },
+        None,
+    );
+    assert!(between.files.len() >= 3);
+    let missing = ObjectId::new(&"f".repeat(40)).expect("full ID");
+    let invalid = submit(
+        &engine,
+        Request::Inspect(
+            repo,
+            Inspection::Diff {
+                target: DiffTarget::Between {
+                    old: missing.clone(),
+                    new: missing,
+                },
+                path: None,
+            },
+        ),
+    );
+    assert!(matches!(invalid.result, Err(GitError::InvalidReference)));
+}
+
+#[test]
+fn finds_branches_merge_parents_upstream_pagination_and_detached_head() {
+    let fixture = Fixture::new(&[]);
+    let base = fixture.commit("ação\n\nbody\u{1e}with\u{1f}separators");
+    fixture.git(["switch", "--quiet", "-c", "topic"]);
+    fixture.write("topic", "topic");
+    let topic = fixture.commit("topic");
+    fixture.git(["switch", "--quiet", "main"]);
+    fixture.write("main", "main");
+    let main = fixture.commit("main");
+    fixture.git(["merge", "--quiet", "--no-ff", "-m", "merge", "topic"]);
+    let merged = fixture.oid("HEAD");
+    fixture.git(["remote", "add", "local", "https://example.invalid/ignored"]);
+    fixture.git(["update-ref", "refs/remotes/local/main", base.as_str()]);
+    fixture.git(["branch", "--set-upstream-to=local/main", "main"]);
+    let engine = engine(EngineOptions::default());
+    let repo = trust(&engine, fixture.path());
+    let TaskValue::Branches(branches) = inspect(&engine, &repo, Inspection::Branches) else {
+        panic!("expected branches");
+    };
+    assert!(matches!(branches.head, HeadState::Attached(_, ref id) if id == &merged));
+    assert!(branches.branches.iter().any(|branch| {
+        branch.current
+            && branch
+                .upstream
+                .as_ref()
+                .is_some_and(|name| name.as_bytes() == b"refs/remotes/local/main")
+    }));
+    assert!(
+        branches
+            .branches
+            .iter()
+            .any(|branch| branch.remote_tracking && branch.id == base)
+    );
+    assert_eq!(
+        status(&engine, &repo, false).branch.divergence,
+        Some((3, 0))
+    );
+    let page = |skip, size| {
+        let TaskValue::History(history) = inspect(
+            &engine,
+            &repo,
+            Inspection::History(HistoryPage::new(skip, size).expect("valid page")),
+        ) else {
+            panic!("expected page");
+        };
+        history
+    };
+    let first = page(0, 1);
+    assert_eq!(first.root, Some(merged));
+    assert_eq!(first.next_offset, Some(1));
+    assert_eq!(first.commits[0].parents, [main, topic]);
+    assert_eq!(first.commits[0].author.name, b"Stage Two");
+    assert_eq!(first.commits[0].committer.email, b"fixture@example.invalid");
+    let next = page(1, 10);
+    let original = next
+        .commits
+        .iter()
+        .find(|commit| commit.id == base)
+        .expect("root commit");
+    assert_eq!(original.subject, "ação".as_bytes());
+    assert!(original.message.ends_with(b"body\x1ewith\x1fseparators\n"));
+    fixture.git(["switch", "--quiet", "--detach", base.as_str()]);
+    let TaskValue::Branches(detached) = inspect(&engine, &repo, Inspection::Branches) else {
+        panic!("expected branches");
+    };
+    assert_eq!(detached.head, HeadState::Detached(base));
+    assert!(detached.branches.iter().all(|branch| !branch.current));
+    assert!(status(&engine, &repo, false).branch.branch.is_none());
+}
+
+#[test]
+fn identifies_bare_and_linked_worktrees_with_shared_identity() {
+    let fixture = Fixture::new(&[]);
+    let base = fixture.commit("initial");
+    let nested = fixture.path().join("sub dir");
+    fs::create_dir(&nested).expect("fixture subdirectory");
+    let sibling = tempfile::tempdir().expect("linked worktree parent");
+    let linked = sibling.path().join("linked á");
+    fixture.git([
+        OsStr::new("worktree"),
+        OsStr::new("add"),
+        OsStr::new("--quiet"),
+        OsStr::new("-b"),
+        OsStr::new("linked"),
+        linked.as_os_str(),
+    ]);
+    let engine = engine(EngineOptions::default());
+    let primary = identify(&engine, &nested);
+    let secondary = identify(&engine, &linked);
+    assert_eq!(primary.identity(), secondary.identity());
+    assert_ne!(primary.git_dir(), secondary.git_dir());
+    let TaskValue::Info(info) = inspect(
+        &engine,
+        &secondary.authorize_local_metadata(),
+        Inspection::Info,
+    ) else {
+        panic!("expected worktree info");
+    };
+    assert!(
+        matches!(info.head, HeadState::Attached(name, id) if name.as_bytes() == b"refs/heads/linked" && id == base)
+    );
+    let bare_fixture = Fixture::new(&["--bare"]);
+    let bare_repo = trust(&engine, bare_fixture.path());
+    assert!(bare_repo.repository().worktree().is_none());
+    assert!(
+        matches!(inspect(&engine, &bare_repo, Inspection::Info), TaskValue::Info(info)
+        if matches!(info.head, HeadState::Unborn(_)))
+    );
+    assert!(matches!(
+        submit(
+            &engine,
+            Request::Inspect(
+                bare_repo,
+                Inspection::Status {
+                    include_ignored: false
+                }
+            )
+        )
+        .result,
+        Err(GitError::UnsupportedRepositoryFeature(_))
+    ));
+}
+
+#[test]
+fn sha256_supports_status_refs_history_and_comparison() {
+    let fixture = Fixture::new(&["--object-format=sha256"]);
+    fixture.write("file", "before\n");
+    let before = fixture.commit("before");
+    fixture.write("file", "after\n");
+    let after = fixture.commit("after");
+    let engine = engine(EngineOptions::default());
+    let repo = trust(&engine, fixture.path());
+    let TaskValue::Info(info) = inspect(&engine, &repo, Inspection::Info) else {
+        panic!("expected info");
+    };
+    assert_eq!(info.object_format, "sha256");
+    assert_eq!(
+        status(&engine, &repo, false).branch.oid,
+        Some(after.clone())
+    );
+    let TaskValue::Branches(branches) = inspect(&engine, &repo, Inspection::Branches) else {
+        panic!("expected branches");
+    };
+    assert_eq!(branches.branches[0].id.as_str().len(), 64);
+    let data = diff(
+        &engine,
+        &repo,
+        DiffTarget::Between {
+            old: before,
+            new: after,
+        },
+        None,
+    );
+    assert_eq!(data.files[0].objects[0].as_str().len(), 64);
+    let TaskValue::History(history) = inspect(
+        &engine,
+        &repo,
+        Inspection::History(HistoryPage::new(0, 2).expect("valid page")),
+    ) else {
+        panic!("expected history");
+    };
+    let first = &history.commits[0];
+    assert_eq!(first.id.as_str().len(), 64);
+    assert_eq!(first.id.abbreviated().len(), 12);
+    assert_eq!(first.parents[0].as_str().len(), 64);
+}
+
+#[test]
+fn conflict_reports_index_stages_without_a_combined_patch() {
+    let fixture = Fixture::new(&[]);
+    fixture.write("shared", "base\n");
+    fixture.commit("base");
+    fixture.git(["switch", "--quiet", "-c", "side"]);
+    fixture.write("shared", "side\n");
+    fixture.commit("side");
+    fixture.git(["switch", "--quiet", "main"]);
+    fixture.write("shared", "main\n");
+    fixture.commit("main");
+    let conflict = fixture_command(fixture.path())
+        .args(["merge", "--no-edit", "side"])
+        .output()
+        .expect("fixture merge");
+    assert_eq!(conflict.status.code(), Some(1));
+    let engine = engine(EngineOptions::default());
+    let repo = trust(&engine, fixture.path());
+    let status = status(&engine, &repo, false);
+    assert!(status.entries.iter().any(|entry| matches!(&entry.kind, EntryKind::Unmerged { modes, objects }
+        if modes.iter().all(|&mode| mode == 0o100_644) && objects.iter().all(|id| !id.as_str().starts_with("0000")))));
+    assert_eq!(diff(&engine, &repo, DiffTarget::Index, None).files, []);
+    assert_eq!(
+        diff(&engine, &repo, DiffTarget::Worktree, None).files[0]
+            .path
+            .as_bytes(),
+        b"shared"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_paths_preserve_newline_tabs_non_utf8_and_pathspec_syntax() {
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    let fixture = Fixture::new(&[]);
+    let weird = PathBuf::from(std::ffi::OsString::from_vec(
+        b"a tab\tand\nbyte\xff".to_vec(),
+    ));
+    let magic = Path::new(":(glob)*");
+    fixture.write(&weird, b"one\n");
+    fixture.write(magic, b"one\n");
+    fixture.commit("base");
+    fixture.write(&weird, b"two\n");
+    fixture.write(magic, b"two\n");
+    let engine = engine(EngineOptions::default());
+    let repo = trust(&engine, fixture.path());
+    let status = status(&engine, &repo, false);
+    assert!(
+        status
+            .entries
+            .iter()
+            .any(|entry| entry.path.to_path_buf().expect("native path") == weird)
+    );
+    let one = diff(
+        &engine,
+        &repo,
+        DiffTarget::Worktree,
+        Some(RepoPath::new(weird.clone()).expect("native literal")),
+    );
+    assert_eq!(one.files[0].path.as_bytes(), weird.as_os_str().as_bytes());
+    let one = diff(
+        &engine,
+        &repo,
+        DiffTarget::Worktree,
+        Some(RepoPath::new(magic.into()).expect("magic is literal")),
+    );
+    assert_eq!(one.files.len(), 1);
+    assert_eq!(one.files[0].path.as_bytes(), b":(glob)*");
+
+    let link = tempfile::tempdir().expect("sibling");
+    let alias = link.path().join("symlink");
+    std::os::unix::fs::symlink(fixture.path(), &alias).expect("symlink fixture");
+    assert_eq!(
+        identify(&engine, &alias).identity(),
+        repo.repository().identity()
+    );
+}
+
+#[test]
+fn policy_refuses_unapproved_metadata_and_keeps_existing_locks() {
+    let fixture = Fixture::new(&[]);
+    fixture.commit("base");
+    let engine = engine(EngineOptions::default());
+    let repo = trust(&engine, fixture.path());
+    let marker = fixture.path().join("must-not-be-created");
+    for key in [
+        "core.fsmonitor",
+        "core.hooksPath",
+        "diff.external",
+        "diff.custom.command",
+        "diff.custom.textconv",
+        "filter.custom.clean",
+        "filter.custom.smudge",
+        "filter.custom.process",
+        "include.path",
+        "includeIf.gitdir:unused.path",
+        "core.worktree",
+        "alias.status",
+        "pager.status",
+        "submodule.other.update",
+    ] {
+        fixture.git([
+            OsStr::new("config"),
+            OsStr::new("--local"),
+            OsStr::new(key),
+            marker.as_os_str(),
+        ]);
+        let report = submit(
+            &engine,
+            Request::Inspect(
+                repo.clone(),
+                Inspection::Status {
+                    include_ignored: false,
+                },
+            ),
+        );
+        assert!(
+            matches!(report.result, Err(GitError::SecurityPolicyViolation(_))),
+            "blocked {key}: {report:?}"
+        );
+        assert!(report.processes.is_empty());
+        assert!(!marker.exists());
+        fixture.git([
+            "config",
+            "--file",
+            ".git/config",
+            "--no-includes",
+            "--unset-all",
+            key,
+        ]);
+    }
+    fixture.git(["config", "--local", "remote.origin.promisor", "true"]);
+    let result = submit(&engine, Request::Inspect(repo.clone(), Inspection::Info)).result;
+    assert!(matches!(
+        result,
+        Err(GitError::UnsupportedRepositoryFeature("partial clone"))
+    ));
+    fixture.git([
+        "config",
+        "--file",
+        ".git/config",
+        "--unset-all",
+        "remote.origin.promisor",
+    ]);
+    fixture.write(".git/objects/info/alternates", "absent\n");
+    assert!(matches!(
+        submit(&engine, Request::Inspect(repo.clone(), Inspection::Info)).result,
+        Err(GitError::UnsupportedRepositoryFeature(_))
+    ));
+    fs::remove_file(fixture.path().join(".git/objects/info/alternates"))
+        .expect("remove fixture alternate");
+    fixture.write(".git/index.lock", b"existing lock");
+    assert!(matches!(
+        submit(&engine, Request::Inspect(repo, Inspection::Info)).result,
+        Err(GitError::RepositoryLocked)
+    ));
+    assert_eq!(
+        fs::read(fixture.path().join(".git/index.lock")).expect("preserved lock"),
+        b"existing lock"
+    );
+}
+
+#[test]
+fn bounded_output_malformed_frames_and_argument_validation_are_explicit() {
+    let fixture = Fixture::new(&[]);
+    fixture.write("a".repeat(80), "untracked");
+    let engine = engine(EngineOptions {
+        stdout_limit: 64,
+        ..EngineOptions::default()
+    });
+    let repo = trust(&engine, fixture.path());
+    let task = engine
+        .submit(Request::Inspect(
+            repo,
+            Inspection::Status {
+                include_ignored: false,
+            },
+        ))
+        .expect("enqueue");
+    assert!(matches!(
+        task.state(),
+        GitTaskState::Queued | GitTaskState::Running | GitTaskState::Failed
+    ));
+    let report = task.wait().expect("receive");
+    assert!(matches!(
+        report.result,
+        Err(GitError::OutputLimitExceeded(OutputStream::Stdout))
+    ));
+    assert!(ObjectId::new("HEAD~2").is_err());
+    assert!(ReferenceName::new("refs/heads/new@{2}").is_err());
+    assert!(ReferenceName::new("refs/heads/tab\t").is_err());
+    assert!(RepoPath::new("../escape".into()).is_err());
+    assert!(RepoPath::new(fixture.path().to_owned()).is_err());
+    assert!(HistoryPage::new(0, 501).is_err());
+    assert!(
+        RepositoryStatus::parse(b"# branch.oid (initial)\0# branch.head main\0? cut mid-path")
+            .is_err()
+    );
+    assert!(
+        RepositoryStatus::parse(b"# branch.oid (initial)\0# branch.head main\0x future\0").is_err()
+    );
+    assert!(RepositoryDiff::parse(b":raw\0unterminated patch").is_err());
+}
+
+#[test]
+fn simultaneous_requests_return_their_own_structured_results() {
+    let fixture = Fixture::new(&[]);
+    let id = fixture.commit("base");
+    let engine = engine(EngineOptions {
+        workers: 4,
+        queue_capacity: 24,
+        ..EngineOptions::default()
+    });
+    let repo = trust(&engine, fixture.path());
+    let tasks: Vec<_> = (0..20)
+        .map(|_| {
+            engine
+                .submit(Request::Inspect(
+                    repo.clone(),
+                    Inspection::Status {
+                        include_ignored: false,
+                    },
+                ))
+                .expect("enqueue")
+        })
+        .collect();
+    let mut ids = std::collections::HashSet::new();
+    for task in tasks {
+        let id_task = task.id();
+        assert!(ids.insert(id_task));
+        let report = task.wait().expect("result delivered");
+        assert_eq!(report.id, id_task);
+        assert!(
+            matches!(report.result, Ok(TaskValue::Status(status)) if status.branch.oid == Some(id.clone()))
+        );
+    }
+    engine.shutdown();
+}
+
+#[test]
+#[ignore = "subprocess fixture with an isolated environment"]
+fn fixture_ambient_git_settings() {
+    assert!(std::env::var_os("GIT_DIR").is_some());
+    let fixture = Fixture::new(&[]);
+    let id = fixture.commit("true repository");
+    let engine = engine(EngineOptions::default());
+    let repo = trust(&engine, fixture.path());
+    assert_eq!(status(&engine, &repo, false).branch.oid, Some(id));
+}
+
+#[test]
+fn git_environment_isolated_and_worktree_git_file_is_never_used_as_executable() {
+    let output = Command::new(std::env::current_exe().expect("test executable"))
+        .args([
+            "--ignored",
+            "--exact",
+            "fixture_ambient_git_settings",
+            "--nocapture",
+        ])
+        .env("GIT_DIR", "unused-local-fixture")
+        .env("GIT_WORK_TREE", "unused-local-fixture")
+        .env("GIT_INDEX_FILE", "unused-local-fixture")
+        .env("GIT_COMMON_DIR", "unused-local-fixture")
+        .env("GIT_OBJECT_DIRECTORY", "unused-local-fixture")
+        .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", "unused-local-fixture")
+        .env("GIT_CONFIG_COUNT", "1")
+        .env("GIT_CONFIG_KEY_0", "core.bare")
+        .env("GIT_CONFIG_VALUE_0", "true")
+        .env("GIT_CONFIG_PARAMETERS", "invalid-fixture")
+        .env("GIT_EXEC_PATH", "unused-local-fixture")
+        .env("GIT_EXTERNAL_DIFF", "unused-local-fixture")
+        .env("GIT_SSH_COMMAND", "unused-local-fixture")
+        .env("GIT_ASKPASS", "unused-local-fixture")
+        .output()
+        .expect("environment isolation fixture");
+    assert!(
+        output.status.success(),
+        "isolation test failed: {} {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let fixture = Fixture::new(&[]);
+    fixture.commit("base");
+    fixture.write(
+        if cfg!(windows) { "git.exe" } else { "git" },
+        b"inert fixture data",
+    );
+    let engine = engine(EngineOptions::default());
+    let repo = trust(&engine, fixture.path());
+    assert!(
+        status(&engine, &repo, false)
+            .entries
+            .iter()
+            .any(|entry| entry.kind == EntryKind::Untracked)
+    );
+}
+
+#[test]
+fn invalid_existing_head_ref_is_not_classified_as_unborn() {
+    let fixture = Fixture::new(&[]);
+    fixture.commit("base");
+    fixture.write(".git/refs/heads/main", "not an object\n");
+    let engine = engine(EngineOptions::default());
+    let repo = trust(&engine, fixture.path());
+    assert!(matches!(
+        submit(&engine, Request::Inspect(repo, Inspection::Info)).result,
+        Err(GitError::InvalidReference)
+    ));
+}
+
+#[test]
+fn notification_arrives_after_the_result_is_available() {
+    let fixture = Fixture::new(&[]);
+    let engine = engine(EngineOptions::default());
+    let repo = trust(&engine, fixture.path());
+    let (completed, notifications) = std::sync::mpsc::channel();
+    let task = engine
+        .submit_notifying(Request::Inspect(repo, Inspection::Info), completed)
+        .expect("notifyable request");
+    assert_eq!(
+        notifications
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .expect("completion event"),
+        task.id()
+    );
+    assert_eq!(task.state(), GitTaskState::Completed);
+    assert!(matches!(
+        task.try_take().expect("published report").result,
+        Ok(TaskValue::Info(_))
+    ));
+    assert!(task.try_take().is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn type_change_aligns_patch_fragments_and_rejects_linked_object_metadata() {
+    let fixture = Fixture::new(&[]);
+    fixture.write("changes-type", "original\n");
+    fixture.write("ordinary", "first\n");
+    fixture.commit("base");
+    fs::remove_file(fixture.path().join("changes-type")).expect("remove file before replacing it");
+    std::os::unix::fs::symlink("ordinary", fixture.path().join("changes-type"))
+        .expect("new symbolic link");
+    fixture.write("ordinary", "second\n");
+    let engine = engine(EngineOptions::default());
+    let repo = trust(&engine, fixture.path());
+    let patch = diff(&engine, &repo, DiffTarget::Worktree, None);
+    assert_eq!(patch.files.len(), 2);
+    let changed = &patch.files[0];
+    assert_eq!(changed.path.as_bytes(), b"changes-type");
+    assert_eq!(changed.change, FileChange::TypeChanged);
+    assert_eq!(changed.hunks.len(), 2);
+    assert_eq!(patch.files[1].path.as_bytes(), b"ordinary");
+    std::os::unix::fs::symlink(
+        "ordinary",
+        fixture.path().join(".git/objects/info/disallowed"),
+    )
+    .expect("isolated linked metadata fixture");
+    let result = submit(&engine, Request::Inspect(repo, Inspection::Info)).result;
+    assert!(matches!(result, Err(GitError::SecurityPolicyViolation(_))));
+}
+
+#[test]
+fn actual_branch_can_have_the_same_name_as_the_detached_sentinel() {
+    let fixture = Fixture::new(&[]);
+    fixture.git(["symbolic-ref", "HEAD", "refs/heads/(detached)"]);
+    let engine = engine(EngineOptions::default());
+    let repo = trust(&engine, fixture.path());
+    assert_eq!(
+        status(&engine, &repo, false)
+            .branch
+            .branch
+            .expect("unborn named branch")
+            .as_bytes(),
+        b"(detached)"
+    );
+    fixture.commit("initial");
+    assert_eq!(
+        status(&engine, &repo, false)
+            .branch
+            .branch
+            .expect("attached named branch")
+            .as_bytes(),
+        b"(detached)"
+    );
+}
+
+#[test]
+fn porcelain_decodes_copy_scores_submodule_flags_and_rejects_mixed_id_widths() {
+    let sha1 = "a".repeat(40);
+    let sha256 = "b".repeat(64);
+    let entry = format!(
+        "# branch.oid {sha1}\0# branch.head main\02 C. SCMU 160000 160000 160000 {sha1} {sha1} C085 current\0previous\0"
+    );
+    let status = RepositoryStatus::parse(entry.as_bytes()).expect("copy and submodule fields");
+    assert!(
+        matches!(&status.entries[0].kind, EntryKind::RenamedOrCopied { from, similarity: 85 }
+        if from.as_bytes() == b"previous")
+    );
+    assert_eq!(
+        status.entries[0].submodule,
+        Some(gitrust_git::SubmoduleState::Submodule {
+            commit: true,
+            modified: true,
+            untracked: true,
+        })
+    );
+    let malformed = format!(
+        "# branch.oid {sha1}\0# branch.head main\01 .M N... 100644 100644 100644 {sha1} {sha256} mismatch\0"
+    );
+    assert!(matches!(
+        RepositoryStatus::parse(malformed.as_bytes()),
+        Err(GitError::MalformedOutput(_))
+    ));
+}

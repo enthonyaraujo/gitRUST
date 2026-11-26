@@ -154,6 +154,11 @@ impl HostDiagnostics {
 pub enum CrateStageStatus {
     /// Implemented and active in Stage 00.
     ActiveInFoundation,
+    /// Functional implementation introduced in a subsequent stage.
+    Active {
+        /// Roadmap stage that introduced the implementation.
+        stage: u8,
+    },
     /// Architectural boundary defined; functional implementation scheduled for a later stage.
     Planned {
         /// Target roadmap stage number (`2`..=`10`).
@@ -168,7 +173,7 @@ pub struct WorkspaceCrateSummary {
     pub name: &'static str,
     /// Concise architectural responsibility.
     pub responsibility: &'static str,
-    /// Real implementation state in Stage 00.
+    /// Implementation state in the roadmap.
     pub status: CrateStageStatus,
 }
 
@@ -192,7 +197,7 @@ pub const WORKSPACE_CRATES: [WorkspaceCrateSummary; 6] = [
     WorkspaceCrateSummary {
         name: "gitrust-git",
         responsibility: "Shell-free Git CLI boundary and future Gitoxide evaluation",
-        status: CrateStageStatus::Planned { target_stage: 2 },
+        status: CrateStageStatus::Active { stage: 2 },
     },
     WorkspaceCrateSummary {
         name: "gitrust-storage",
