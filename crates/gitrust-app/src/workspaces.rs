@@ -1,5 +1,7 @@
 #[path = "workspace_changes.rs"]
 mod changes;
+#[path = "workspace_navigation.rs"]
+mod navigation;
 
 use std::{
     collections::HashMap,
@@ -106,6 +108,8 @@ enum Operation {
     Provision(ProvisionKind),
     ChangesRead,
     ChangesWrite(TrustedRepository),
+    NavigationRead(navigation::Read),
+    NavigationWrite(TrustedRepository),
 }
 
 struct Pending {
@@ -138,6 +142,7 @@ struct Coordinator {
     view: RepositoryView,
     candidate: Option<RepositoryCandidate>,
     changes: changes::ChangesState,
+    navigation: navigation::State,
     trusted: HashMap<PathBuf, TrustedRepository>,
     pending: Option<Pending>,
     events: Sender<WorkerEvent>,
@@ -178,6 +183,7 @@ impl Coordinator {
             view: RepositoryView::default(),
             candidate: None,
             changes: changes::ChangesState::default(),
+            navigation: navigation::State::default(),
             trusted: HashMap::new(),
             pending: None,
             events,
@@ -274,6 +280,9 @@ impl Coordinator {
         if let Some(view) = &mut self.view.changes {
             view.busy = false;
         }
+        if let Some(view) = &mut self.view.navigation {
+            view.busy = false;
+        }
         self.candidate = None;
         self.view.candidate = None;
         self.view.progress = None;
@@ -336,7 +345,7 @@ impl Coordinator {
     fn on_action(&mut self, action: RepositoryAction) {
         if matches!(
             self.pending.as_ref().map(|job| &job.operation),
-            Some(Operation::ChangesWrite(_))
+            Some(Operation::ChangesWrite(_) | Operation::NavigationWrite(_))
         ) && !matches!(
             action,
             RepositoryAction::Cancel | RepositoryAction::SavePreferences(_)
@@ -345,6 +354,7 @@ impl Coordinator {
         }
         match action {
             RepositoryAction::Changes(intent) => self.on_changes(intent),
+            RepositoryAction::Navigate(intent) => self.on_navigation(intent),
             RepositoryAction::Browse => self.folder_dialog(false),
             RepositoryAction::BrowseDestination => self.folder_dialog(true),
             RepositoryAction::RetryGit if self.engine.is_none() => self.discover_git(),
@@ -498,6 +508,13 @@ impl Coordinator {
             self.complete_changes(pending.operation, report.result);
             return;
         }
+        if matches!(
+            pending.operation,
+            Operation::NavigationRead(_) | Operation::NavigationWrite(_)
+        ) {
+            self.complete_navigation(pending.operation, report.result);
+            return;
+        }
         match report.result {
             Ok(TaskValue::Identified(candidate)) => self.offer(candidate, false),
             Ok(TaskValue::Provisioned(candidate)) => {
@@ -570,7 +587,7 @@ impl Coordinator {
         self.view.unavailable.retain(|entry| entry != &path);
         self.view.active = Some(workspace);
         self.set_changes(status, changed_workspace);
-        self.trusted.insert(path.clone(), trust);
+        self.trusted.insert(path.clone(), trust.clone());
         self.view.activity = Activity::Idle;
         self.view.issue = None;
         if !refresh {
@@ -580,14 +597,20 @@ impl Coordinator {
         if changed_workspace {
             self.watch(&info.repository);
         }
+        self.load_navigation(trust, changed_workspace);
     }
 
     fn failed(&mut self, operation: Operation, error: &GitError) {
+        tracing::debug!(%error, "workspace inspection ended with an error");
         let problem = issue(error);
         let path = match operation {
             Operation::Identify(path) => Some(path),
             Operation::Inspect { trust, .. } => Some(repo_path(trust.repository()).to_owned()),
-            Operation::Provision(_) | Operation::ChangesRead | Operation::ChangesWrite(_) => None,
+            Operation::Provision(_)
+            | Operation::ChangesRead
+            | Operation::ChangesWrite(_)
+            | Operation::NavigationRead(_)
+            | Operation::NavigationWrite(_) => None,
         };
         if matches!(
             problem,
@@ -608,6 +631,7 @@ impl Coordinator {
             {
                 self.view.active = None;
                 self.set_changes(None, true);
+                self.clear_navigation();
                 self.unwatch();
             }
         }
@@ -631,7 +655,9 @@ impl Coordinator {
                     Operation::Inspect { trust, .. } => repo_path(trust.repository()) == path,
                     Operation::Provision(_)
                     | Operation::ChangesRead
-                    | Operation::ChangesWrite(_) => false,
+                    | Operation::ChangesWrite(_)
+                    | Operation::NavigationRead(_)
+                    | Operation::NavigationWrite(_) => false,
                 });
         if pending_for_path || self.view.candidate.as_deref() == Some(path) {
             self.invalidate();
@@ -640,6 +666,7 @@ impl Coordinator {
         if active {
             self.view.active = None;
             self.set_changes(None, true);
+            self.clear_navigation();
             self.unwatch();
         }
         self.save_recent();

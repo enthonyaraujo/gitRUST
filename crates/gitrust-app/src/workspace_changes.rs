@@ -17,7 +17,7 @@ pub(super) struct ChangesState {
     version: u64,
     amend_head: Option<ObjectId>,
     review_id: u64,
-    status: Option<Arc<RepositoryStatus>>,
+    pub(super) status: Option<Arc<RepositoryStatus>>,
     patch: Option<Arc<ChangePatch>>,
     review: Option<(u64, Vec<ChangePatch>)>,
     result: Option<ChangesNotice>,
