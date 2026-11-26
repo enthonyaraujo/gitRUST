@@ -92,12 +92,19 @@ impl ChangesUi {
                 p,
             );
             match self.pane {
+                Pane::Files | Pane::Diff
+                    if view.rows.is_empty() && (self.pane == Pane::Diff || !self.reveal_filter) =>
+                {
+                    if self.pane == Pane::Files {
+                        self.files(ui, view, l, p);
+                    }
+                    c::panel(p.background, 8).show(ui, clean);
+                }
                 Pane::Files => {
                     command = ui
                         .add_enabled_ui(enabled, |ui| self.files(ui, view, l, p))
                         .inner;
                 }
-                Pane::Diff if view.rows.is_empty() => clean(ui),
                 Pane::Diff => {
                     command = ui
                         .add_enabled_ui(enabled, |ui| self.preview(ui, view, l, p))
