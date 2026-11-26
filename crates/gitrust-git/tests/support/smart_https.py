@@ -47,7 +47,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("WWW-Authenticate", 'Basic realm="fixture"')
                 self.end_headers()
                 return
-        if url.path.startswith("/protected.git/") and (
+        if not os.path.exists("allow-protected") and url.path.startswith("/protected.git/") and (
             url.query == "service=git-receive-pack" or url.path.endswith("/git-receive-pack")
         ):
             self.send_response(403)
