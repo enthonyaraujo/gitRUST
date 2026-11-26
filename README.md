@@ -8,23 +8,11 @@ Inspired by the approachable workflow of [GitHub Desktop](https://github.com/des
 
 ## Current Project Status
 
-> **Current Stage:** `Stage 00 — Project Foundation` (`v0.1.0-alpha.0`)
+> **Current Stage:** Stage 01 — Design System completed (`v0.1.0-alpha.0`).
 
-gitRUST is at the foundational stage of development. Only capabilities verified for Stage 00 are currently implemented:
+The normal workspace opens without a repository. Settings provides Light, Dark and System themes, English and Brazilian Portuguese, and 100%–200% session zoom. Open the component gallery with `gitrust --diagnostics`. The gallery and sample workspace illustrate Changes, History, unified and side-by-side diffs, and long-list behavior using synthetic data.
 
-- **Implemented in Stage 00:**
-  - Multi-crate Cargo Workspace with acyclic dependency boundaries and `#![forbid(unsafe_code)]` via workspace lints.
-  - Native desktop window shell (`gitrust` binary) built with `egui` + `eframe` (`0.37`) and `wgpu` (`30`), with zero web/WebView dependencies.
-  - Resizable desktop window with minimum/default size constraints, normal window close handling, and event-driven rendering (no continuous idle repainting).
-  - Real-time runtime diagnostics view reporting the active OS session (Wayland/X11/Win32/AppKit), GPU adapter, graphics backend API, and workspace crate boundaries.
-  - Architectural documentation, preliminary security model, performance measurement methodology, Architecture Decision Records (ADR-0001 through ADR-0005), and multi-OS GitHub Actions CI.
-- **Not Yet Implemented (Planned for Subsequent Stages):**
-  - Definitive visual identity and component library (`Stage 01 — Design System`).
-  - Functional Git CLI execution engine (`Stage 02 — Git Engine`).
-  - Repository discovery, cloning, and local persistence (`Stage 03 — Repository Management`).
-  - Working-tree diffing, staging, commits, branches, history, remotes, and provider integrations (`Stages 04–08`).
-
-See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the complete stage breakdown toward `v0.1.0`.
+Git integration begins with Stage 02. Repository operations, clone, staging, commits, networking and credentials remain unavailable. See [the roadmap](docs/ROADMAP.md) for the remaining stages.
 
 ---
 
@@ -45,7 +33,7 @@ gitRUST/
 ├── crates/
 │   ├── gitrust-app/        # Native binary (`gitrust`), eframe/wgpu bootstrap, CLI flags
 │   ├── gitrust-core/       # Pure-Rust state, metadata, diagnostics, and event model
-│   ├── gitrust-ui/         # Provisional egui foundation view (Design System in Stage 01)
+│   ├── gitrust-ui/         # Native egui shell, design tokens, diff views, and diagnostics
 │   ├── gitrust-git/        # Shell-free Git command spec boundary (Stage 02 target)
 │   ├── gitrust-storage/    # Storage & OS keychain policy boundary (Stage 03 target)
 │   └── gitrust-providers/  # Hosting provider security boundary (Stage 08 target)
@@ -90,12 +78,16 @@ cargo run -p gitrust-app --release
 
 ## Documentation Index
 
+- [Design System](docs/DESIGN_SYSTEM.md) — Visual direction, tokens, typography, and component catalog.
+- [Native UI Architecture](docs/UI_ARCHITECTURE.md) — Shell modules, diagnostic mode, and scalable rendering.
+- [Accessibility](docs/ACCESSIBILITY.md) — Keyboard operation, AccessKit, and validation scope.
+- [Internationalization](docs/INTERNATIONALIZATION.md) — English and Brazilian Portuguese catalog and fallback.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — System architecture, crate DAG, and Git engine design.
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — Official development stages (`00` through `10`) and `v0.1.0` scope.
 - [`docs/BUILD.md`](docs/BUILD.md) — Platform dependencies, compilation guide, and runtime environment variables.
 - [`docs/SECURITY_ARCHITECTURE.md`](docs/SECURITY_ARCHITECTURE.md) — Threat model, untrusted repository defenses, and secret policies.
 - [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) — Exploratory resource targets and reproducible benchmark methodology.
-- [`docs/adr/README.md`](docs/adr/README.md) — Architecture Decision Records (`ADR-0001` to `ADR-0005`).
+- [`docs/adr/README.md`](docs/adr/README.md) — Architecture Decision Records (`ADR-0001` to `ADR-0006`).
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — Contribution guidelines and quality gates.
 - [`SECURITY.md`](SECURITY.md) — Vulnerability reporting and disclosure policy.
 - [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) — Third-party dependency elections and embedded font attributions.
