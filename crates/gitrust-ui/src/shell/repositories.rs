@@ -109,6 +109,8 @@ impl Form {
 pub(super) struct ManagerUi {
     pub(super) view: RepositoryView,
     query: String,
+    changes: super::changes::ChangesUi,
+    overview: bool,
     form: Option<Form>,
     action: Option<RepositoryAction>,
 }
@@ -125,6 +127,11 @@ impl ManagerUi {
     pub(super) fn usable(&self) -> bool {
         self.view.git_available
             && matches!(self.view.activity, Activity::Idle | Activity::Inspecting)
+            && self
+                .view
+                .changes
+                .as_ref()
+                .is_none_or(|changes| !changes.busy)
     }
 
     pub(super) fn title(&self, l: Language) -> String {
@@ -144,6 +151,9 @@ impl ManagerUi {
     }
 
     pub(super) fn workspace(&mut self, ui: &mut Ui, p: Palette, l: Language) {
+        if self.real_changes(ui, p, l) {
+            return;
+        }
         ScrollArea::vertical()
             .id_salt("repository-workspace")
             .show(ui, |ui| {
@@ -211,6 +221,49 @@ impl ManagerUi {
                     }
                 }
             });
+    }
+
+    fn real_changes(&mut self, ui: &mut Ui, p: Palette, l: Language) -> bool {
+        if let Some(changes) = self.view.changes.as_ref()
+            && let Some(workspace) = self.view.active.as_ref()
+        {
+            ui.horizontal_wrapped(|ui| {
+                c::tabs(
+                    ui,
+                    &mut self.overview,
+                    &[
+                        (false, l.text(Text::Changes)),
+                        (true, l.local("Overview", "Visão geral")),
+                    ],
+                    p,
+                );
+                if changes.busy {
+                    c::loading(ui, l.local("Working…", "Processando…"), None);
+                    if ui.button(l.text(Text::Cancel)).clicked() {
+                        self.action = Some(RepositoryAction::Cancel);
+                    }
+                } else if let Some((success, message)) = super::changes::notice(changes, l) {
+                    ui.colored_label(if success { p.success } else { p.warning }, message);
+                }
+            });
+            if !self.overview {
+                if let Some(issue) = self.view.issue {
+                    ui.colored_label(p.error, issue_text(l, issue));
+                }
+                if let Some(intent) = self.changes.show(
+                    ui,
+                    workspace,
+                    changes,
+                    self.view.activity == Activity::Idle,
+                    l,
+                    p,
+                ) {
+                    self.action = Some(RepositoryAction::Changes(intent));
+                }
+                return true;
+            }
+        }
+        false
     }
 
     fn summary(

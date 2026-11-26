@@ -1,3 +1,7 @@
+use std::collections::BTreeSet;
+
+use gitrust_core::changes::{ChangePreview, PatchRow, PatchSelection};
+
 use std::borrow::Cow;
 use std::ops::Range;
 
@@ -152,24 +156,29 @@ impl TextDiff {
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Diff<'a> {
     Text(&'a TextDiff),
+    Real(&'a ChangePreview),
     Stress(usize),
     Binary,
     Empty,
 }
 
-impl Diff<'_> {
-    const fn count(self, mode: DiffMode) -> usize {
+impl<'a> Diff<'a> {
+    fn count(self, mode: DiffMode) -> usize {
         match self {
             Self::Text(data) => match mode {
                 DiffMode::Unified => data.unified.len(),
                 DiffMode::Split => data.lines.len(),
             },
+            Self::Real(preview) => patch_rows(preview, mode).len(),
             Self::Stress(len) => len,
             Self::Binary | Self::Empty => 0,
         }
     }
 
-    fn row(self, mode: DiffMode, index: usize) -> [Cell<'static>; 2] {
+    fn row(self, mode: DiffMode, index: usize) -> [Cell<'a>; 2] {
+        if let Self::Real(preview) = self {
+            return patch_cells(preview, patch_rows(preview, mode)[index], mode);
+        }
         if let Self::Text(data) = self {
             return match mode {
                 DiffMode::Unified => {
@@ -203,9 +212,89 @@ impl Diff<'_> {
     const fn longest(self) -> usize {
         match self {
             Self::Text(data) => data.longest,
+            Self::Real(preview) => preview.columns,
             Self::Stress(_) => 38,
             Self::Binary | Self::Empty => 0,
         }
+    }
+}
+
+fn patch_rows(preview: &ChangePreview, mode: DiffMode) -> &[PatchRow] {
+    match mode {
+        DiffMode::Unified => &preview.unified,
+        DiffMode::Split => &preview.split,
+    }
+}
+
+fn patch_cells<'a>(preview: &'a ChangePreview, row: PatchRow, mode: DiffMode) -> [Cell<'a>; 2] {
+    match row {
+        PatchRow::Metadata(index) => Line::Hunk(&preview.metadata[index]).cells(),
+        PatchRow::Hunk(index) => Line::Hunk(&preview.hunks[index].header).cells(),
+        PatchRow::NoNewline(sides) => sides.map(|show| {
+            if show {
+                Cell::new(None, "\\ No newline at end of file", "", Tone::Plain)
+            } else {
+                Cell::new(None, "", "", Tone::Missing)
+            }
+        }),
+        PatchRow::Lines(hunk, [first, second]) => {
+            let read = |index: Option<usize>| index.map(|index| &preview.hunks[hunk].lines[index]);
+            let a = read(first);
+            let b = read(second);
+            if let Some(line) = a
+                && let (Some(old), Some(new)) = (line.old, line.new)
+            {
+                return Line::Context(old as usize, new as usize, &line.text).cells();
+            }
+            let removed = |line: Option<&'a gitrust_core::changes::PatchLine>| {
+                line.and_then(|line| line.old.map(|number| (number as usize, line.text.as_str())))
+            };
+            let added = |line: Option<&'a gitrust_core::changes::PatchLine>| {
+                line.and_then(|line| line.new.map(|number| (number as usize, line.text.as_str())))
+            };
+            let swapped = mode == DiffMode::Unified && a.is_some_and(|line| line.old.is_none());
+            if swapped {
+                swap_if(
+                    Line::Change {
+                        old: removed(b),
+                        new: added(a),
+                    }
+                    .cells(),
+                    true,
+                )
+            } else {
+                Line::Change {
+                    old: removed(a),
+                    new: added(b),
+                }
+                .cells()
+            }
+        }
+    }
+}
+
+fn selection_at(source: Diff<'_>, mode: DiffMode, index: usize) -> [Option<PatchSelection>; 2] {
+    let Diff::Real(preview) = source else {
+        return [None; 2];
+    };
+    if !preview.partial {
+        return [None; 2];
+    }
+    match patch_rows(preview, mode)[index] {
+        PatchRow::Hunk(hunk) => [Some(PatchSelection { hunk, line: None }), None],
+        PatchRow::Lines(hunk, lines) => std::array::from_fn(|side| {
+            lines[side]
+                .filter(|&position| {
+                    let line = &preview.hunks[hunk].lines[position];
+                    (mode == DiffMode::Split || side == 0)
+                        && (line.old.is_none() || line.new.is_none())
+                })
+                .map(|line| PatchSelection {
+                    hunk,
+                    line: Some(line),
+                })
+        }),
+        _ => [None; 2],
     }
 }
 
@@ -239,6 +328,20 @@ impl DiffView {
         l: Language,
         p: Palette,
     ) {
+        self.show_with_selection(ui, id, source, mode, l, p, None);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn show_with_selection(
+        &mut self,
+        ui: &mut Ui,
+        id: Id,
+        source: Diff<'_>,
+        mode: &mut DiffMode,
+        l: Language,
+        p: Palette,
+        selection: Option<&mut BTreeSet<PatchSelection>>,
+    ) {
         if source.count(*mode) == 0 {
             self.active = None;
             self.copied = false;
@@ -258,14 +361,14 @@ impl DiffView {
         if *mode == DiffMode::Split {
             split_header(ui, l, p, (ui.available_width() / 2.0).floor());
         }
-        self.viewport(ui, id.with(*mode as u8), source, *mode, l, p);
+        self.viewport(ui, id.with(*mode as u8), source, *mode, l, p, selection);
         if copy {
             ui.ctx().copy_text(copy_diff(source));
             self.copied = true;
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     fn viewport(
         &mut self,
         ui: &mut Ui,
@@ -274,6 +377,7 @@ impl DiffView {
         mode: DiffMode,
         l: Language,
         p: Palette,
+        mut selection: Option<&mut BTreeSet<PatchSelection>>,
     ) {
         let count = source.count(mode);
         let split = mode == DiffMode::Split;
@@ -330,6 +434,27 @@ impl DiffView {
                     );
                     row_ui.spacing_mut().item_spacing.x = 0.0;
                     render_row(&mut row_ui, cells, mode, width, offset, l, p);
+                    if let Some(selection) = selection.as_deref_mut() {
+                        for (side, item) in
+                            selection_at(source, mode, index).into_iter().enumerate()
+                        {
+                            if let Some(item) = item {
+                                let left = if side == 0 {
+                                    row.left()
+                                } else {
+                                    row.center().x
+                                };
+                                patch_checkbox(
+                                    &mut row_ui,
+                                    selection,
+                                    item,
+                                    egui::pos2(left + 3.0, y),
+                                    l,
+                                    p,
+                                );
+                            }
+                        }
+                    }
                 }
             });
             let focused = ui.interact(area.inner_rect, keyboard, Sense::focusable_noninteractive());
@@ -359,6 +484,54 @@ impl DiffView {
                 );
             }
         });
+    }
+}
+
+fn patch_checkbox(
+    ui: &mut Ui,
+    selection: &mut BTreeSet<PatchSelection>,
+    item: PatchSelection,
+    position: egui::Pos2,
+    l: Language,
+    p: Palette,
+) {
+    let selected = selection.contains(&item);
+    let label = if item.line.is_some() {
+        l.local("Select line", "Selecionar linha")
+    } else {
+        l.local("Select hunk", "Selecionar trecho")
+    };
+    let rect = Rect::from_min_size(position, vec2(17.0, LINE_HEIGHT));
+    let response = ui.interact(rect, ui.scope_id().with(item), Sense::click());
+    response.widget_info(|| WidgetInfo::selected(Role::CheckBox, ui.is_enabled(), selected, label));
+    let checkbox = Rect::from_center_size(rect.center(), vec2(12.0, 12.0));
+    ui.painter().rect(
+        checkbox,
+        2,
+        if selected { p.accent } else { p.surface },
+        egui::Stroke::new(
+            1.0,
+            if response.has_focus() || response.hovered() {
+                p.focus
+            } else {
+                p.muted
+            },
+        ),
+        egui::StrokeKind::Inside,
+    );
+    if selected {
+        let mid = checkbox.center();
+        ui.painter().add(egui::Shape::line(
+            vec![
+                mid + vec2(-3.0, 0.0),
+                mid + vec2(-1.0, 2.0),
+                mid + vec2(3.0, -2.0),
+            ],
+            egui::Stroke::new(1.3, p.background),
+        ));
+    }
+    if response.on_hover_text(label).clicked() && !selection.remove(&item) {
+        selection.insert(item);
     }
 }
 
@@ -444,6 +617,9 @@ fn split_header(ui: &mut Ui, l: Language, p: Palette, pane: f32) {
 }
 
 fn copy_diff(source: Diff<'_>) -> String {
+    if let Diff::Real(preview) = source {
+        return preview.text.clone();
+    }
     let mut text = String::new();
     for index in 0..source.count(DiffMode::Unified) {
         let cell = source.row(DiffMode::Unified, index)[0];
@@ -520,7 +696,12 @@ fn render_cell(
             number(ui, numbers[1], p);
         }
     }
-    let text_left = ui.next_widget_position().x + PADDING;
+    let text_left = ui.next_widget_position().x
+        + if cell.tone == Tone::Hunk {
+            PADDING + 17.0
+        } else {
+            PADDING
+        };
     let mut text_rect = egui::Rect::from_min_max(egui::pos2(text_left, rect.top()), rect.max);
     let clip = ui.clip_rect().intersect(text_rect);
     text_rect.min.x -= offset;
