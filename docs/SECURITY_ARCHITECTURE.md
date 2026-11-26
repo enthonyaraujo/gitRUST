@@ -54,18 +54,20 @@ flowchart LR
 
 **Threat:** Opening or inspecting a crafted repository triggers arbitrary code execution via `.git/config` directives (`core.fsmonitor`, `core.sshCommand`, `core.pager`, `core.editor`, `diff.external`, clean/smudge filters) or `.git/hooks/*`.
 
-**Controls (Stage 02+ Git Engine Gate):**
-- Read-only inspection commands (`status`, `diff`, `log`, `branch`, `rev-list`) must pass safe configuration overrides (`-c core.fsmonitor=false`, `--no-optional-locks`, `--no-ext-diff`, `--no-textconv` unless explicitly trusted) and disable pager execution (`GIT_PAGER=cat` or `--no-pager`).
-- Never execute files from `.git/hooks/` directly from `gitRUST`. When Git commands invoke user hooks (e.g., `commit`, `push`), surface hook presence clearly and allow safe `--no-verify` or trusted-repository scoping in Stage 09.
-- Never execute binaries located relative to the current working directory on Windows (`Command` resolution must resolve a verified `git` executable path rather than relative current-directory lookup).
+**Stage 02 controls**
+
+- Identify candidates without Git execution. Before inspection, require explicit authorization of stable local metadata and validate the layout, config and reference backend. Disable local config includes during preflight. Reject disallowed configuration, including content filters, which can apply to status and diff.
+- Clear the subprocess environment and exclude system/global config and attributes, optional locks, replacement refs, pagers, prompts, external diff and text conversion. Preserve Git's ownership checks. The policy refuses external object stores, promisor repositories and unsupported Git directory indirection.
+- Launch only the absolute native Git chosen from trusted PATH entries or by the caller. Disable transports and lazy fetch even when harmless remote metadata is present. Filesystem and executable provenance remain trust assumptions. [Git Engine contract](GIT_ENGINE.md)
 
 ### 3.2 Command and Argument Injection
 
-**Threat:** Crafted branch names, file paths (e.g., `-oProxyCommand=...`, `--upload-pack=...`), or remote URLs inject unintended flags into `git` or SSH subprocesses.
+**Threat:** Repository-controlled names, revisions, paths or configured extensions alter command interpretation.
 
-**Controls:**
-- **Implemented in Stage 00 (`gitrust-git`):** `GitCommandSpec` enforces discrete `OsString` argument arrays, validates canonical `[a-z][a-z0-9-]*` Git subcommand names (rejecting leading-dash option injection such as `-c` or `--upload-pack`), and rejects embedded NUL bytes in paths and arguments; shell invocation (`sh -c`, `cmd /C`) is architecturally absent.
-- **Required in Stage 02+:** Always pass `--end-of-options` and `--` to separate flags from revisions and file paths; validate remote URL schemes (`https://`, `ssh://`, standard SCP-like `git@host:path`), rejecting dangerous `ext::` transport helpers by default (`GIT_ALLOW_PROTOCOL=https:ssh:file`).
+**Stage 02 controls**
+
+- The engine alone constructs the arguments of a closed set of Git operations. It uses native argument arrays, full object IDs, validated reference names and literal repository-relative paths. Use `--end-of-options` for supported revision commands and `--` for path or ref operands.
+- No transport or mutating operation is available. Later stages must validate remote schemes and credential/transport behavior separately.
 
 ### 3.3 Information Disclosure (Credentials & Logs)
 
@@ -88,8 +90,8 @@ flowchart LR
 **Threat:** Concurrent mutating Git commands corrupt `.git/index` or leave stale `.git/index.lock` files; huge untracked directories or binary diffs exhaust UI memory; accidental destructive commands erase uncommitted work.
 
 **Controls:**
-- Per-repository asynchronous write lock serializing all `SerializedWrite` and `DestructiveWrite` commands (Stage 02).
-- Bounded output buffers and paginated/virtualized diff rendering (Stage 02 / Stage 04).
+- The Stage 02 scheduler reserves exclusive access for both write classes by canonical common Git directory. The executable allowlist contains read operations only.
+- Stage 02 bounds stdout, stderr, queued requests, task time and decoded items. Unix process groups and Windows Job Objects support termination of active reads. Stage 04 can use the typed models for virtualized rendering.
 - Explicit confirmation gates for `DestructiveWrite` operations; automated destructive tests restricted strictly to ephemeral temporary directories (never real repositories).
 
 ---

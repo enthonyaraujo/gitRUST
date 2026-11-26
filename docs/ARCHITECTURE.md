@@ -44,7 +44,7 @@ flowchart TD
 | `gitrust-core` | **Implemented (Foundation)** | Pure domain models, metadata, runtime/host diagnostics, `AppState`, and deterministic `AppEvent` reducer. | None (`std` only) |
 | `gitrust-ui` | **Implemented** | Native `egui` shell and design system decoupled from OS windowing and headlessly testable via `egui::Context`. | `egui` |
 | `gitrust-app` | **Implemented (Foundation)** | Native binary (`gitrust`), CLI flag handling, `eframe` + `wgpu` initialization, Wayland/X11 integration, and clean shutdown lifecycle. | `eframe`, `egui`, `tracing`, `tracing-subscriber` |
-| `gitrust-git` | **Boundary Only (Planned Stage 02)** | Shell-free `GitCommandSpec`, non-UTF-8 `OsString`/`PathBuf` contracts, and operation safety classes. Functional Git CLI engine scheduled for **Stage 02**. | None (`std` only) |
+| `gitrust-git` | **Stage 02 implementation** | Typed, local Git discovery and read-only inspection, asynchronous task scheduling and byte-oriented parsers. | `gitrust-core`, `process-wrap` |
 | `gitrust-storage` | **Boundary Only (Planned Stage 03)** | Storage security baseline prohibiting plaintext credentials and telemetry by default. Persistent config and keychain adapters scheduled for **Stage 03 / Stage 08**. | None (`std` only) |
 | `gitrust-providers` | **Boundary Only (Planned Stage 08)** | Strict TLS policy contract. GitHub, GitLab, and hosting API clients scheduled for **Stage 08**. | None (`std` only) |
 
@@ -53,7 +53,7 @@ flowchart TD
 Per Stage 00 engineering guidelines, two intentional refinements were made relative to the reference directory skeleton:
 
 1. **Workspace Integration Tests (`crates/gitrust-app/tests/` instead of root `tests/`):** Because the root `Cargo.toml` is a **virtual Cargo manifest** (`[workspace]` without a root `[package]`), Cargo only discovers and executes integration tests placed inside member crates (`crates/*/tests/`). Placing `workspace_integration.rs` inside `crates/gitrust-app/tests/` ensures `cargo test --workspace` compiles and executes cross-crate and binary CLI integration tests automatically.
-2. **Asset and Benchmark Directories (`assets/` and `benches/`).** Empty directories with placeholder files were omitted in Stage 00. Stage 01 introduces licensed typography in `crates/gitrust-ui/assets` and first-party painted icons. `criterion` benchmarks (`benches/`) will be introduced alongside real workloads in **Stage 02 (Git Engine)** and **Stage 09 (Security and Performance)**.
+2. **Asset and Benchmark Directories (`assets/` and `benches/`).** Empty directories with placeholder files were omitted in Stage 00. Stage 01 introduces licensed typography in `crates/gitrust-ui/assets` and first-party painted icons. Stage 02 adds an opt-in benchmark harness in `crates/gitrust-git/benches`. Stage 09 can expand measurements based on workloads observed in practice.
 3. **Supply-Chain Policy (`deny.toml`):** Added at the workspace root to enforce MIT-compatible dependency licensing and vulnerability checks in CI.
 
 ---
@@ -68,25 +68,10 @@ Per Stage 00 engineering guidelines, two intentional refinements were made relat
 
 ---
 
-## 4. Planned Git Engine Architecture (Stage 02 Target — Not Yet Implemented)
+## 4. Git Engine Architecture (Stage 02)
 
-### 4.1 Strategy: Git CLI Primary, Gitoxide Evaluable
+System Git supplies the initial implementation behind a typed `gitrust-git` boundary. [ADR-0003](adr/0003-git-cli-initial-integration-strategy.md) records the adapter choice. [ADR-0007](adr/0007-local-git-inspection.md) defines the narrower local-read trust policy.
 
-gitRUST will initially execute operations through the system `git` executable behind an explicit Rust port/adapter boundary in `gitrust-git` (see [`ADR-0003`](adr/0003-git-cli-initial-integration-strategy.md)).
+Discovery and authorization are separate. Allowlisted requests run in a bounded worker pool and return typed models through a completion channel. The engine constructs every command, using the absolute Git executable, discrete native arguments, literal file selectors and a cleared subprocess environment. Machine formats preserve bytes for Git paths and commit content. The engine keeps subprocess supervision and decoding independent of presentation.
 
-Why start with Git CLI:
-- Full behavioral parity with user `.gitconfig`, `includeIf`, SSH agents, GPG/SSH commit signing, Git LFS filters, sparse checkouts, submodules, and worktrees.
-- Battle-tested repository integrity guarantees (`index.lock`, atomic ref updates, packfile verification).
-
-Why isolate behind traits for future `gitoxide` (`gix`) evaluation:
-- Pure-Rust read paths (e.g., high-frequency status inspection, commit-graph walking, blame, or diffing) can later be benchmarked and selectively backed by `gix` where compatibility and safety are proven, without rewriting `gitrust-core` or `gitrust-ui`.
-
-### 4.2 Mandatory Git Engine Invariants (Stage 02+)
-
-1. **Zero Shell Execution:** Commands are spawned strictly via `std::process::Command` (or async equivalent) using discrete `OsStr` arguments (`GitCommandSpec`). Shell wrappers (`sh -c`, `cmd /C`) are forbidden.
-2. **Option Termination Discipline:** Dynamic revisions and paths are separated with `--` and `--end-of-options` where supported to prevent leading-dash argument injection.
-3. **Non-UTF-8 Path Fidelity:** Repository paths and file entries use `PathBuf`, `OsString`, and raw byte parsers (`--porcelain=v2 -z` NUL-delimited output) rather than assuming UTF-8 filenames.
-4. **Sanitized Subprocess Environment:** Interactive prompts are suppressed (`GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never` unless explicitly routed through an approved credential flow), `LC_ALL=C` is set for deterministic machine parsing where needed, and dangerous config overrides are neutralized via `-c` flags when inspecting untrusted repositories.
-5. **Asynchronous Execution & Safe Cancellation:** Git subprocesses run on background worker tasks communicating with `gitrust-core` via bounded channels (`egui::Context::request_repaint` triggered on completion). Cancellation terminates read-only child processes cleanly; mutating operations respect Git lockfiles and reconcile repository state afterward.
-6. **Per-Repository Write Serialization:** Concurrent read operations may run within bounded concurrency, whereas all mutating operations (`SerializedWrite` / `DestructiveWrite`) acquire an asynchronous per-repository mutex/queue so `gitRUST` never triggers self-inflicted `.git/index.lock` races.
-7. **Explicit Destructive Operation Gating:** Commands capable of discarding uncommitted data or rewriting history (`reset --hard`, `checkout -- <file>`, `clean -fd`, `branch -D`, `push --force-with-lease`) require typed confirmation tokens generated only by explicit user authorization in the UI.
+The canonical common Git directory is the scheduler identity for a working tree and its linked worktrees. Read-only operations may coexist. Reserved write classes require exclusive access with writer ordering. The UI can use completion notifications when the repository and changes stages connect the engine. [Git Engine contract](GIT_ENGINE.md)

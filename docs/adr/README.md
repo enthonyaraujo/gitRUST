@@ -12,6 +12,7 @@ This directory records significant architectural decisions made in **gitRUST**, 
 | [ADR-0004](0004-cargo-workspace-organization.md) | Organize Codebase as a Multi-Crate Acyclic Cargo Workspace | Accepted | 00 |
 | [ADR-0005](0005-cross-platform-strategy.md) | Linux-First Cross-Platform Strategy (Wayland, X11, Windows, macOS) | Accepted | 00 |
 | [ADR-0006](0006-opt-in-ui-diagnostics.md) | Keep synthetic data in opt-in UI diagnostics | Proposed | 01 |
+| [ADR-0007](0007-local-git-inspection.md) | Local Git inspection with an explicit metadata trust boundary | Proposed | 02 |
 
 ## Lifecycle States
 

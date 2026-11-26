@@ -268,8 +268,12 @@ In each separate 20-second focused probe, 41 native frames corresponded to 40 or
 
 The six abbreviated 15-second controls recorded 0.0000% CPU at the process clock's resolution. They covered the empty workspace, Unified demo and 100,000-line diff on both protocols, with no focused text editor. Abbreviated controls (`target/stage01.3-evidence/unfocused/samples.ndjson`)
 
-## 9. Future Micro- and Macro-Benchmarks (Stage 02 & Stage 09)
+## 9. Git Engine benchmarks (Stage 02)
 
-As Git Engine and larger production data flows are introduced:
-- `benches/` will use `criterion` to measure deterministic non-UI workloads (`status --porcelain=v2 -z` parsing, unified diff chunking, commit graph indexing) against synthetic repositories of `1k`, `10k`, and `100k` tracked files.
-- UI frame-time percentiles (`p50`, `p95`, `p99`) will be measured during continuous scrolling of large diffs and commit histories.
+Run `cargo bench --locked -p gitrust-git --bench engine` on an otherwise idle host. The opt-in Rust harness uses two warm-ups and 21 timed samples per case. It reports min, median, p95, p99, max and throughput. On Linux it samples the harness RSS after each case. An optional external peak-RSS measurement should name the measurement tool, clarify its process scope and record the host CPU, OS, Git version, toolchain and filesystem.
+
+The workload compares direct Git command output with typed engine end-to-end requests against the same temporary data. It also times standalone parsers. Status uses 100, 1,000, 10,000 and 100,000 tracked files with 1% modified, plus synthetic porcelain output at the same entry counts. A single-file patch yields 100,000 changed lines. History reads a 50-commit page from a 3,000-commit fixture. Throughput submits 32 concurrent status requests to pools of one, two and four workers.
+
+Direct Git rows include subprocess startup and capture. Engine rows add policy preflight, scheduling and parsing. History direct rows use a pre-resolved HEAD and capture the same page commands. Parser rows are in-process only. Do not subtract separately aggregated percentile values as if they were paired runs.
+
+Criterion was considered. This initial suite needs a few wall-clock samples and simple percentiles, so it uses `std::time` and the existing temporary-fixture dependency. Consider Criterion when statistically rigorous regression tracking justifies its additional development dependencies. UI frame-time benchmarks and historical GPU measurements are independent of this engine suite.
