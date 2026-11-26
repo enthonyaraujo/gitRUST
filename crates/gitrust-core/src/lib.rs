@@ -6,6 +6,7 @@
 //! basic lifecycle events.
 
 pub mod changes;
+pub mod github;
 pub mod navigation;
 pub mod remotes;
 pub mod workspaces;

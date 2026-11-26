@@ -1,14 +1,11 @@
-//! Remote hosting provider boundary (`GitHub`, `GitLab`, and self-hosted instances).
-//!
-//! # Stage 00 Status
-//! Provider integrations are **not implemented** in Stage 00 and are scheduled
-//! for **Stage 09 (Provider Integrations)**. No HTTP client or network stack is
-//! compiled into the workspace during Stage 00.
+//! Native hosting provider clients.
+
+pub mod github;
 
 use gitrust_core::CrateStageStatus;
 
 /// Current implementation readiness of `gitrust-providers`.
-pub const STAGE_STATUS: CrateStageStatus = CrateStageStatus::Planned { target_stage: 8 };
+pub const STAGE_STATUS: CrateStageStatus = CrateStageStatus::Active { stage: 7 };
 
 /// Transport security policy for all future remote provider connections.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,6 +1,6 @@
 [package]
 name = "gitrust-providers"
-description = "Remote Git hosting provider integration boundary for gitRUST (Stage 09 target)."
+description = "Native remote hosting integration for gitRUST."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,6 +10,10 @@ publish.workspace = true
 
 [dependencies]
 gitrust-core.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "3.5.2", default-features = false, features = ["rustls-no-provider", "_ring"] }
+rustls-native-certs = "0.8.5"
 
 [lints]
 workspace = true
