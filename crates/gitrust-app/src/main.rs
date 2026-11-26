@@ -3,6 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod ime;
+mod workspaces;
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -296,6 +297,10 @@ struct GitRustApp {
     view: Desktop,
     smoke_test: Option<SmokeTestController>,
     wayland_ime: Option<ime::WaylandIme>,
+    workspaces: Option<workspaces::Workspaces>,
+    focus: bool,
+    last_preferences: gitrust_core::workspaces::Preferences,
+    preference_overrides: [bool; 3],
 }
 
 impl GitRustApp {
@@ -320,7 +325,13 @@ impl GitRustApp {
         );
 
         let state = AppState::new(metadata, host, graphics);
-        let view = Desktop::new(&cc.egui_ctx, ui_options);
+        let mut view = Desktop::new(&cc.egui_ctx, ui_options);
+        let workspaces = (ui_options.diagnostics.is_none() && smoke_test.is_none()).then(|| {
+            view.enable_repository_management();
+            workspaces::Workspaces::start(&cc.egui_ctx)
+        });
+        let last_preferences = view.preferences();
+        let preference_overrides = interactive_preference_overrides(std::env::args_os());
         let wayland_ime = (protocol == WindowSessionProtocol::Wayland)
             .then(|| ime::WaylandIme::install(&cc.egui_ctx));
 
@@ -329,6 +340,10 @@ impl GitRustApp {
             view,
             smoke_test: smoke_test.map(SmokeTestController::new),
             wayland_ime,
+            workspaces,
+            focus: false,
+            last_preferences,
+            preference_overrides,
         }
     }
 
@@ -397,15 +412,62 @@ impl GitRustApp {
     }
 }
 
+fn interactive_preference_overrides(
+    args: impl IntoIterator<Item = std::ffi::OsString>,
+) -> [bool; 3] {
+    let mut overrides = [false; 3];
+    for arg in args {
+        match arg.to_str() {
+            Some("--theme") => overrides[0] = true,
+            Some("--language") => overrides[1] = true,
+            Some("--scale") => overrides[2] = true,
+            _ => {}
+        }
+    }
+    overrides
+}
+
 impl eframe::App for GitRustApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if let Some(ime) = &self.wayland_ime {
             ime.preserve_during_logic(ctx);
         }
+        if let Some(workspaces) = &self.workspaces {
+            if let Some(update) = workspaces.take_update() {
+                if let Some(preferences) = update.preferences {
+                    self.view
+                        .apply_saved_preferences(ctx, preferences, self.preference_overrides);
+                    self.last_preferences = self.view.preferences();
+                }
+                if let Some(view) = update.view {
+                    self.view.set_repository_view(view);
+                }
+                if let Some(path) = update.directory {
+                    self.view.set_repository_destination(path);
+                }
+            }
+            let focused = ctx.input(|input| input.viewport().focused.unwrap_or(self.focus));
+            if focused && !self.focus {
+                workspaces.send(gitrust_core::workspaces::RepositoryAction::Focus);
+            }
+            self.focus = focused;
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let events = self.view.show(ui, &self.state);
+        if let Some(workspaces) = &self.workspaces {
+            if let Some(action) = self.view.take_repository_action() {
+                workspaces.send(action);
+            }
+            let preferences = self.view.preferences();
+            if preferences != self.last_preferences {
+                self.last_preferences = preferences;
+                workspaces.send(gitrust_core::workspaces::RepositoryAction::SavePreferences(
+                    preferences,
+                ));
+            }
+        }
         if let Some(ime) = &mut self.wayland_ime {
             ime.remember_ui_output(ui.ctx());
         }

@@ -24,6 +24,13 @@ allow = [
     "BSL-1.0",
 ]
 
+# notify gives the native watcher public-domain terms with a fallback license.
+# Keep this approval scoped to the reviewed crate; the global allowlist is unchanged.
+[[licenses.exceptions]]
+name = "notify"
+version = "=9.0.0"
+allow = ["CC0-1.0"]
+
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"

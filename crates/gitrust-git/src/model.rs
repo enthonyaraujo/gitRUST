@@ -244,6 +244,8 @@ pub enum GitError {
     UnsupportedGitVersion(crate::GitVersion),
     /// The requested directory does not identify a repository.
     InvalidRepository,
+    /// A new repository destination is already occupied.
+    DestinationExists,
     /// Its metadata was not authorized for inspection or Git rejected ownership.
     RepositoryNotTrusted,
     /// Access was denied by the operating system.
@@ -298,6 +300,7 @@ impl fmt::Display for GitError {
             Self::InvalidExecutable => f.write_str("invalid Git executable"),
             Self::UnsupportedGitVersion(version) => write!(f, "unsupported Git version {version}"),
             Self::InvalidRepository => f.write_str("invalid Git repository"),
+            Self::DestinationExists => f.write_str("repository destination already exists"),
             Self::RepositoryNotTrusted => {
                 f.write_str("Git repository ownership or trust was rejected")
             }

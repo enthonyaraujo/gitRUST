@@ -5,6 +5,8 @@
 //! only verified application metadata, runtime graphics/session diagnostics, and
 //! basic lifecycle events.
 
+pub mod workspaces;
+
 /// Official user-facing product name.
 pub const APP_NAME: &str = "gitRUST";
 
@@ -15,9 +17,9 @@ pub const PACKAGE_NAME: &str = "gitrust";
 pub const APP_LICENSE: &str = "MIT";
 
 /// Current development stage identifier.
-pub const CURRENT_STAGE_ID: &str = "01";
+pub const CURRENT_STAGE_ID: &str = "03";
 /// Current development stage name.
-pub const CURRENT_STAGE_NAME: &str = "Design System";
+pub const CURRENT_STAGE_NAME: &str = "Repository Management";
 
 /// Default logical window dimensions `(width, height)` in points.
 ///
@@ -177,7 +179,7 @@ pub struct WorkspaceCrateSummary {
     pub status: CrateStageStatus,
 }
 
-/// Canonical list of workspace crates and their truthful Stage 00 status.
+/// Canonical list of workspace crates and their implementation status.
 pub const WORKSPACE_CRATES: [WorkspaceCrateSummary; 6] = [
     WorkspaceCrateSummary {
         name: "gitrust-app",
@@ -202,7 +204,7 @@ pub const WORKSPACE_CRATES: [WorkspaceCrateSummary; 6] = [
     WorkspaceCrateSummary {
         name: "gitrust-storage",
         responsibility: "Local configuration persistence and OS keychain policy",
-        status: CrateStageStatus::Planned { target_stage: 3 },
+        status: CrateStageStatus::Active { stage: 3 },
     },
     WorkspaceCrateSummary {
         name: "gitrust-providers",

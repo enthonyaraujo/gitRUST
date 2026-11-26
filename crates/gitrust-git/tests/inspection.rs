@@ -973,3 +973,187 @@ fn porcelain_decodes_copy_scores_submodule_flags_and_rejects_mixed_id_widths() {
         Err(GitError::MalformedOutput(_))
     ));
 }
+
+#[test]
+fn init_produces_an_unborn_workspace_and_never_replaces_existing_paths() {
+    use gitrust_git::CreateRepository;
+
+    let parent = tempfile::tempdir().expect("destination parent");
+    let destination = parent.path().join("typed workspace");
+    let engine = engine(EngineOptions::default());
+    let request =
+        CreateRepository::new(destination.clone(), "first".to_owned()).expect("valid init");
+    let report = submit(&engine, Request::Create(request.clone()));
+    let TaskValue::Provisioned(candidate) = report.result.expect("init succeeds") else {
+        panic!("expected explicit candidate after init");
+    };
+    assert_eq!(
+        candidate.worktree(),
+        Some(
+            destination
+                .canonicalize()
+                .expect("canonical path")
+                .as_path()
+        )
+    );
+    let repo = candidate.authorize_local_metadata();
+    let TaskValue::Workspace(info, changes) = inspect(&engine, &repo, Inspection::Workspace) else {
+        panic!("expected workspace info");
+    };
+    assert!(
+        matches!(info.head, HeadState::Unborn(ref branch) if branch.as_bytes() == b"refs/heads/first")
+    );
+    assert!(!info.has_remote);
+    assert!(changes.is_some_and(|status| status.entries.is_empty()));
+    fs::write(destination.join("keep"), "unchanged").expect("user data");
+    assert!(matches!(
+        submit(&engine, Request::Create(request)).result,
+        Err(GitError::DestinationExists)
+    ));
+    assert_eq!(
+        fs::read_to_string(destination.join("keep")).expect("preserved data"),
+        "unchanged"
+    );
+    assert!(CreateRepository::new(destination, "--bare".into()).is_err());
+}
+
+#[test]
+fn cancellation_after_publication_keeps_the_completed_repository() {
+    use gitrust_git::CreateRepository;
+    use std::time::{Duration, Instant};
+
+    let parent = tempfile::tempdir().expect("isolated destination parent");
+    let destination = parent.path().join("published");
+    let engine = engine(EngineOptions::default());
+    let request =
+        CreateRepository::new(destination.clone(), "main".to_owned()).expect("valid init request");
+    let task = engine.submit(Request::Create(request)).expect("start init");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !destination.is_dir() {
+        assert!(Instant::now() < deadline, "expected atomic publication");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    task.cancel();
+    assert!(matches!(
+        task.wait().expect("late cancellation result").result,
+        Ok(TaskValue::Provisioned(_))
+    ));
+    assert!(destination.join(".git").is_dir());
+}
+
+fn start_clone_waiting_for_tls(
+    engine: &GitEngine,
+    destination: &Path,
+) -> (gitrust_git::GitTask, std::net::TcpStream) {
+    use gitrust_git::{CloneRepository, CloneSource};
+    use std::{
+        io::Read,
+        net::TcpListener,
+        time::{Duration, Instant},
+    };
+
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("private HTTPS probe");
+    listener
+        .set_nonblocking(true)
+        .expect("non-blocking listener");
+    let address = listener.local_addr().expect("private loopback address");
+    let source =
+        CloneSource::new(&format!("https://{address}/fixture.git")).expect("HTTPS loopback URL");
+    let request = CloneRepository::new(destination.to_owned(), source).expect("new destination");
+    let task = engine
+        .submit(Request::Clone(request))
+        .expect("start HTTPS clone");
+    let until = Instant::now() + Duration::from_secs(8);
+    let mut stream = loop {
+        match listener.accept() {
+            Ok((stream, _)) => break stream,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                assert!(
+                    Instant::now() < until,
+                    "clone reached the loopback TLS probe"
+                );
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(error) => panic!("accept probe: {error}"),
+        }
+    };
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("bounded handshake probe");
+    let mut first = [0; 1];
+    stream.read_exact(&mut first).expect("first TLS record");
+    assert_eq!(first[0], 22, "HTTPS must begin with the TLS handshake");
+    (task, stream)
+}
+
+#[test]
+fn clone_cancellation_keeps_existing_siblings_and_never_publishes_scratch_data() {
+    let parent = tempfile::tempdir().expect("destination parent");
+    fs::write(parent.path().join("keep"), "unchanged").expect("untouched sibling");
+    let destination = parent.path().join("clone target");
+    let engine = engine(EngineOptions::default());
+    let (task, _stream) = start_clone_waiting_for_tls(&engine, &destination);
+    task.cancel();
+    assert!(matches!(
+        task.wait().expect("cancelled clone report").result,
+        Err(GitError::Cancelled)
+    ));
+    assert!(!destination.exists());
+    assert_eq!(fs::read_dir(parent.path()).expect("cleanup").count(), 1);
+    assert_eq!(
+        fs::read_to_string(parent.path().join("keep")).expect("preserved sibling"),
+        "unchanged"
+    );
+}
+
+#[test]
+fn clone_tls_failure_and_engine_shutdown_clear_each_owned_scratch_directory() {
+    let parent = tempfile::tempdir().expect("destination parent");
+    let engine = engine(EngineOptions::default());
+    let destination = parent.path().join("clone target");
+    let (task, stream) = start_clone_waiting_for_tls(&engine, &destination);
+    drop(stream);
+    let Err(GitError::CommandFailed(output)) = task.wait().expect("TLS failure report").result
+    else {
+        panic!("expected redacted clone failure");
+    };
+    assert_eq!(output.stdout.len(), 0);
+    assert_eq!(output.stderr.len(), 0);
+    assert_eq!(fs::read_dir(parent.path()).expect("cleanup").count(), 0);
+    let (task, _stream) = start_clone_waiting_for_tls(&engine, &destination);
+    engine.shutdown();
+    assert!(matches!(
+        task.wait().expect("shutdown report").result,
+        Err(GitError::Cancelled)
+    ));
+    assert_eq!(fs::read_dir(parent.path()).expect("cleanup").count(), 0);
+}
+
+#[test]
+#[ignore = "opt-in HTTPS test against a public host"]
+fn public_https_clone_materializes_and_validates_a_workspace() {
+    use gitrust_git::{CloneRepository, CloneSource};
+    use std::time::Duration;
+
+    let url = std::env::var("GITRUST_PUBLIC_CLONE_TEST_URL").expect("explicit public repository");
+    let source = CloneSource::new(&url).expect("public HTTPS URL");
+    let parent = tempfile::tempdir().expect("isolated clone parent");
+    let destination = parent.path().join("clone");
+    let engine = engine(EngineOptions {
+        timeout: Duration::from_secs(180),
+        ..EngineOptions::default()
+    });
+    let request = Request::Clone(CloneRepository::new(destination, source).expect("new path"));
+    let report = submit(&engine, request);
+    let value = report.result.expect("public HTTPS clone");
+    let TaskValue::Provisioned(candidate) = value else {
+        panic!("expected published clone");
+    };
+    let repo = candidate.authorize_local_metadata();
+    let TaskValue::Workspace(info, Some(status)) = inspect(&engine, &repo, Inspection::Workspace)
+    else {
+        panic!("expected materialized working tree");
+    };
+    assert!(info.has_remote);
+    assert_eq!(status.entries, []);
+}

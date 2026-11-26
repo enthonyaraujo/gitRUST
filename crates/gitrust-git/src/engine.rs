@@ -1,3 +1,6 @@
+#[path = "provision.rs"]
+mod provision;
+
 use std::{
     collections::VecDeque,
     ffi::OsString,
@@ -77,8 +80,12 @@ pub enum GitTaskState {
 pub enum TaskValue {
     /// Identified but not authorized candidate.
     Identified(RepositoryCandidate),
+    /// Created and validated workspace, still awaiting user authorization.
+    Provisioned(RepositoryCandidate),
     /// Repository information.
     Info(RepositoryInfo),
+    /// A single preflight followed by HEAD and optional worktree inspection.
+    Workspace(RepositoryInfo, Option<RepositoryStatus>),
     /// Status snapshot.
     Status(RepositoryStatus),
     /// Parsed two-way diff.
@@ -267,7 +274,7 @@ impl GitEngine {
         let signal = Arc::new(Signal::default());
         let access = Access {
             identity: match &request {
-                Request::Identify(_) => None,
+                Request::Identify(_) | Request::Create(_) | Request::Clone(_) => None,
                 Request::Inspect(repository, _) => Some(repository.repository().identity().clone()),
             },
             class: request.safety_class(),
@@ -458,7 +465,9 @@ fn worker_loop(scheduler: &Scheduler, executable: &GitExecutable, options: Engin
             outputs: Vec::new(),
         };
         let result = runner.execute(&job.request).and_then(|value| {
-            control.check()?;
+            if !matches!(value, TaskValue::Provisioned(_)) {
+                control.check()?;
+            }
             Ok(value)
         });
         scheduler.release(job.id);
@@ -482,6 +491,12 @@ impl Runner<'_> {
                 RepositoryCandidate::discover(path, self.control).map(TaskValue::Identified)
             }
             Request::Inspect(repository, operation) => self.inspect(repository, operation),
+            Request::Create(request) => {
+                self.provision(&request.path, provision::Operation::Init(&request.branch))
+            }
+            Request::Clone(request) => {
+                self.provision(&request.path, provision::Operation::Clone(request))
+            }
         }
     }
 
@@ -490,41 +505,36 @@ impl Runner<'_> {
         trusted: &TrustedRepository,
         operation: &Inspection,
     ) -> Result<TaskValue, GitError> {
-        let (format, width) = self.prepare(trusted)?;
+        let (format, width, has_remote) = self.prepare(trusted)?;
         let repo = trusted.repository();
         let location = repo.location();
         let is_bare = repo.worktree().is_none();
         let head = || self.head(trusted, width);
         match operation {
-            Inspection::Info => Ok(TaskValue::Info(RepositoryInfo {
-                repository: repo.clone(),
-                head: head()?,
-                object_format: format.into(),
-            })),
+            Inspection::Info | Inspection::Workspace => {
+                let info = RepositoryInfo {
+                    has_remote,
+                    repository: repo.clone(),
+                    head: head()?,
+                    object_format: format.into(),
+                };
+                if matches!(operation, Inspection::Info) {
+                    return Ok(TaskValue::Info(info));
+                }
+                let status = if is_bare {
+                    None
+                } else {
+                    Some(self.worktree_status(trusted, width, false)?)
+                };
+                Ok(TaskValue::Workspace(info, status))
+            }
             Inspection::Status { include_ignored } => {
                 if is_bare {
                     return Err(GitError::UnsupportedRepositoryFeature(
                         "status in a bare repository",
                     ));
                 }
-                let spec = GitCommandSpec::new(Builtin::Status)
-                    .args([
-                        "--porcelain=v2",
-                        "-z",
-                        "--branch",
-                        "--ahead-behind",
-                        "--untracked-files=all",
-                        "--ignore-submodules=all",
-                        "--find-renames",
-                    ])
-                    .arg(if *include_ignored {
-                        "--ignored=matching"
-                    } else {
-                        "--no-ignored"
-                    });
-                let symbolic = trusted.head_reference()?;
-                let data = self.record(location, spec, &[], false)?;
-                RepositoryStatus::parse_with_head(data, symbolic.as_ref(), Some(width))
+                self.worktree_status(trusted, width, *include_ignored)
                     .map(TaskValue::Status)
             }
             Inspection::Diff { target, path } => {
@@ -553,9 +563,39 @@ impl Runner<'_> {
         }
     }
 
-    fn prepare(&self, trusted: &TrustedRepository) -> Result<(&'static str, usize), GitError> {
+    fn worktree_status(
+        &mut self,
+        trusted: &TrustedRepository,
+        width: usize,
+        include_ignored: bool,
+    ) -> Result<RepositoryStatus, GitError> {
+        let spec = GitCommandSpec::new(Builtin::Status)
+            .args([
+                "--porcelain=v2",
+                "-z",
+                "--branch",
+                "--ahead-behind",
+                "--untracked-files=all",
+                "--ignore-submodules=all",
+                "--find-renames",
+            ])
+            .arg(if include_ignored {
+                "--ignored=matching"
+            } else {
+                "--no-ignored"
+            });
+        let symbolic = trusted.head_reference()?;
+        let data = self.record(trusted.repository().location(), spec, &[], false)?;
+        RepositoryStatus::parse_with_head(data, symbolic.as_ref(), Some(width))
+    }
+
+    fn prepare(
+        &self,
+        trusted: &TrustedRepository,
+    ) -> Result<(&'static str, usize, bool), GitError> {
         let repo = trusted.repository();
         let location = repo.location();
+        let mut has_remote = false;
         for path in trusted.preflight(self.control)? {
             let spec = GitCommandSpec::new(Builtin::Config)
                 .arg("--file")
@@ -575,7 +615,7 @@ impl Runner<'_> {
                     "invalid local repository configuration",
                 ));
             }
-            validate_config(&raw.stdout)?;
+            has_remote |= validate_config(&raw.stdout)?;
         }
         let spec = GitCommandSpec::new(Builtin::RevParse)
             .args(["--is-bare-repository", "--show-object-format"]);
@@ -601,7 +641,7 @@ impl Runner<'_> {
                 "unexpected repository mode",
             ));
         }
-        Ok((format, width))
+        Ok((format, width, has_remote))
     }
 
     fn diff(
@@ -791,6 +831,10 @@ impl Runner<'_> {
             "core.hooksPath=/dev/null",
             "-c",
             "core.attributesFile=/dev/null",
+            "-c",
+            "core.protectHFS=true",
+            "-c",
+            "core.protectNTFS=true",
             "-c",
             "core.quotePath=true",
             "-c",

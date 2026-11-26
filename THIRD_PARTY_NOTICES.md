@@ -61,3 +61,11 @@ All external crates in the `Linux`, `Windows`, and `macOS` dependency graphs use
 - `BSL-1.0` (Boost Software License 1.0)
 - `Unicode-3.0` (Unicode License v3)
 - `OFL-1.1` and `Ubuntu-font-1.0` (embedded default fonts)
+
+
+## Stage 03 dependencies
+
+- `rfd` 0.18.0 uses MIT for the native directory chooser.
+- `notify` 9.0.0 uses CC0-1.0 for native filesystem events. The cargo-deny exception names this exact package and version. Other packages still use the existing global allowlist.
+- `crossbeam-channel`, `directories`, `tempfile`, `url` and `rustix` use permissive license options. They supply event delivery, native directory paths, temporary staging, HTTPS URL parsing and atomic no-replace publication. Tempfile and rustix were already present in the lockfile. Directories 4.0.1 provides the required platform path API without the MPL-2.0 dependency introduced by later versions.
+- The workspace MSRV remains Rust 1.97.1. Rfd and notify declare Rust 1.92 and 1.91 respectively.

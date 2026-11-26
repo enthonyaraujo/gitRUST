@@ -26,6 +26,14 @@ impl Language {
         self.localized(english, portuguese)
     }
 
+    pub(crate) const fn local(
+        self,
+        english: &'static str,
+        portuguese: &'static str,
+    ) -> &'static str {
+        self.localized(english, Some(portuguese))
+    }
+
     const fn localized(
         self,
         english: &'static str,

@@ -11,7 +11,7 @@ This document defines the staged engineering plan for **gitRUST**. Each stage ha
 | **00** | Project Foundation | Completed and integrated | Yes |
 | **01** | Design System | Completed | Yes |
 | **02** | Git Engine | Completed and integrated | Yes |
-| **03** | Repository Management | Planned | Yes |
+| **03** | Repository Management | Implemented locally, pending review | Yes |
 | **04** | Changes and Commits | Planned | Yes |
 | **05** | Branches and History | Planned | Yes |
 | **06** | Remote Operations | Planned | Yes |
@@ -42,9 +42,10 @@ This document defines the staged engineering plan for **gitRUST**. Each stage ha
 - Integrated into develop with the implementation commits preserved. [Git Engine contract and validation](GIT_ENGINE.md#stage-02-validation) · [PR #4](https://github.com/enthonyaraujo/gitRUST/pull/4)
 
 ### Stage 03 — Repository Management
-- Add existing local repositories, initialize new repositories (`git init`), and clone remote repositories (`git clone` with progress reporting).
-- Local workspace state and recent-repository persistence in `gitrust-storage` (XDG Base Directory on Linux, Known Folders on Windows, Application Support on macOS).
-- Filesystem change detection / focus-refresh policy without excessive CPU wakeups.
+- Open, authorize, track, reopen and remove local workspace entries.
+- Initialize new workspaces and clone public HTTPS repositories with progress, cancellation and secure publication.
+- Persist appearance and workspace history and refresh the active workspace on filesystem changes, focus or manual request.
+- [Repository management](REPOSITORY_MANAGEMENT.md)
 
 ### Stage 04 — Changes and Commits
 - Working tree and index inspection (staged, unstaged, untracked, conflicted, and renamed files).
