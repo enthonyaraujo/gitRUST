@@ -8,8 +8,8 @@ This document defines the staged engineering plan for **gitRUST**. Each stage ha
 
 | Stage | Name | Status | Included in `v0.1.0` |
 | --- | --- | --- | --- |
-| **00** | Project Foundation | **Completed (Pending Maintainer Git Review)** | Yes |
-| **01** | Design System | Planned | Yes |
+| **00** | Project Foundation | Completed and integrated | Yes |
+| **01** | Design System | Completed | Yes |
 | **02** | Git Engine | Planned | Yes |
 | **03** | Repository Management | Planned | Yes |
 | **04** | Changes and Commits | Planned | Yes |
@@ -30,9 +30,10 @@ This document defines the staged engineering plan for **gitRUST**. Each stage ha
 - Governance files, preliminary security architecture, benchmark methodology, ADRs `0001`–`0005`, and multi-OS CI validation.
 
 ### Stage 01 — Design System
-- Original visual identity for gitRUST (color tokens, dark/light high-contrast themes, typography scale, spacing grid, semantic status colors for diffs/states).
-- Reusable `egui` widget primitives in `gitrust-ui` (panels, splitters, virtualized lists, keyboard navigation focus rings, accessible labels via AccessKit, modal confirmation dialogs).
-- Bundled open-licensed typography and vector icons under `assets/`.
+- Original graphite/copper visual system, embedded typography, light/dark/system appearance, English and Brazilian Portuguese, and session zoom.
+- Native application shell with opt-in gallery, synthetic repository preview, Changes and History workspaces, and unified/split diff foundations.
+- Reusable egui components, semantic accessibility labels, resizable workspace, keyboard navigation, and virtual lists.
+- [Design System](DESIGN_SYSTEM.md), [UI architecture](UI_ARCHITECTURE.md), and [accessibility scope](ACCESSIBILITY.md).
 
 ### Stage 02 — Git Engine
 - Asynchronous, shell-free `git` CLI execution engine in `gitrust-git`.

@@ -1,6 +1,8 @@
 # Performance Targets and Measurement Methodology
 
-This document establishes the exploratory performance objectives for **gitRUST**, defines a reproducible cross-platform measurement methodology, and records empirical Stage 00 / Stage 00.1 baselines.
+Paths under `target/` identify local audit artifacts available in the maintainer workspace. Git excludes these artifacts.
+
+This document establishes the exploratory performance objectives for **gitRUST**, defines a reproducible cross-platform measurement methodology, and records the audited foundation baseline and the Stage 01, 01.1 and 01.2 desktop comparisons.
 
 ---
 
@@ -96,8 +98,178 @@ Recorded on `2026-11-24` / `2026-11-25` (`rustc 1.99.1`, `cargo build --locked -
 
 ---
 
-## 5. Future Micro- and Macro-Benchmarks (Stage 02 & Stage 09)
+## 5. Stage 01 desktop comparison
 
-When `gitrust-git` and `gitrust-ui` diff virtualization are implemented:
+Measured on 2026-11-25 on Fedora 45, GNOME/Mutter, kernel `7.3.4-300.fc45.x86_64`, Intel Core i5-13420H, Intel RPL-P graphics (Mesa 26.2.7), approximately 15.3 GiB RAM. The native window reports Wayland or X11 via its display handle. Framebuffer dimensions show Wayland captures at 1× and 1.25× and XWayland captures at 2×. Benchmarks use the uninstrumented release binaries from the integrated foundation (`a6340e6`) and Stage 01, built with Rust 1.99.1 and the same lockfile.
+
+Each smoke timing below is the median of five launches. The settled capture uses the same built-in smoke delay in both builds and includes GPU readback and writing to a temporary file. For each idle run, the regular workspace settles for four seconds and then remains open for 60 seconds without scripted input. CPU uses the difference in `/proc/<pid>/stat` ticks divided by wall time and clock frequency. Memory comes from `status` and `smaps_rollup` at the end of that interval.
+
+| Configuration | Window initialized (ms) | Settled capture (ms) | Idle CPU (%) |
+| --- | ---: | ---: | ---: |
+| Wayland / Vulkan | 160.2 → 144.8 | 467.4 → 432.9 | 0.0000 → 0.0000 |
+| Wayland / GLES | 90.7 → 92.4 | 390.0 → 372.5 | 1.3832 → 0.0000 |
+| XWayland / Vulkan | 179.0 → 140.7 | 520.1 → 438.7 | 0.0000 → 0.0000 |
+| XWayland / GLES | 127.8 → 92.2 | 455.7 → 408.7 | 1.3666 → 0.3166 |
+
+| Configuration | RSS (KiB) | PSS (KiB) | USS (KiB) | RssAnon (KiB) |
+| --- | ---: | ---: | ---: | ---: |
+| Wayland / Vulkan | 133,928 → 135,028 | 89,074 → 94,879 | 55,892 → 63,756 | 29,172 → 28,552 |
+| Wayland / GLES | 117,564 → 118,180 | 78,537 → 81,689 | 50,820 → 55,360 | 26,060 → 25,440 |
+| XWayland / Vulkan | 133,596 → 135,960 | 88,658 → 95,426 | 55,608 → 64,476 | 28,968 → 29,732 |
+| XWayland / GLES | 117,408 → 119,744 | 77,917 → 82,779 | 50,260 → 56,512 | 25,644 → 26,408 |
+
+The executable grew from **26,738,192 to 28,615,984 bytes** (+7.0%), below the 30 MB target. The three new TTFs total 1,067,412 bytes. Measured private memory rose on all four paths and stayed within the target. The final measured desktop run met the idle CPU target in each configuration. The contribution of UI, graphics driver and OS activity to the differences was not isolated. The historical Intel ANV/XWayland and Optimus observations remain applicable to their measured conditions.
+
+### First framebuffer readback
+
+Two temporary, identically instrumented release builds requested a screenshot from the first UI pass, bypassing the smoke test's settling delay when no resize was requested. Five warm launches per build and protocol were interleaved and timed using a PTY. This includes GPU readback and file writing. Presentation timing at the monitor requires compositor instrumentation.
+
+| Vulkan configuration | Foundation first readback median [min–max], ms | Stage 01 first readback median [min–max], ms |
+| --- | ---: | ---: |
+| Wayland | 234.3 [189.0–436.1] | 212.9 [193.0–315.2] |
+| XWayland | 252.6 [227.0–264.2] | 251.6 [234.8–269.1] |
+
+### Virtual viewport CPU cost
+
+In release, 100 headless frames after 10 warmups at 640 × 400 exercised egui layout and CPU tessellation at a fixed viewport. Only visible rows and egui overscan are processed. These timings exclude compositor and GPU work.
+
+| Fixture | Median (ms) | p95 (ms) |
+| --- | ---: | ---: |
+| 100 list entries | 0.098 | 0.179 |
+| 1,000 list entries | 0.083 | 0.116 |
+| 10,000 list entries | 0.083 | 0.095 |
+| 100,000 diff lines | 0.100 | 0.108 |
+
+Run this fixture benchmark with:
+
+```sh
+cargo test --locked --release -p gitrust-ui profile_virtualized_views -- --ignored --nocapture
+```
+
+The local comparison covers Intel under GNOME Wayland and XWayland. It leaves standalone Xorg, Windows, macOS, discrete GPUs, compositor presentation time and cold-cache sampling for separate validation.
+
+---
+
+## 6. Stage 01.1 native refinement
+
+Measured on the Fedora 45 GNOME/Mutter host in Section 5, using Intel RPL-P with Mesa 26.2.7 and Vulkan in both protocols. The saved Stage 01 binary was captured before code changes. The final release is **28,553,824 bytes**, down from 28,615,984 bytes by 62,160 bytes (0.217%). Both builds use the same workspace lockfile. The main comparison used a 28,548,744-byte build before the final Alt shortcut fix. That fix applies only to demonstration tab input.
+
+Settled CPU is process ticks per wall second over 60 seconds, after four seconds of startup settling. Memory is the end-of-window reading from `/proc`. USS sums private clean and private dirty memory. The diagnostic profiles are Unified and the 100,000-line diff gallery. The baseline stage lacked the latter startup option, so the stress profile has Stage 01.1 measurements only.
+
+Warm launches use five samples. The initialization marker reports the time until the native window and Vulkan adapter have been created. Smoke time also includes the built-in 250 ms settling interval and window shutdown. Pipe output is timed to the observed marker. These figures do not measure display presentation.
+
+| Vulkan configuration | Stage 01 smoke median (ms) | Stage 01.1 init median [min–max] (ms) | Stage 01.1 smoke median (ms) | Idle CPU (%) Stage 01 → 01.1 |
+| --- | ---: | ---: | ---: | ---: |
+| Wayland, empty workspace | 442.5 | 262.4 [219.1–507.4] | 570.8 | 0.1167 → 5.1996 |
+| Wayland, Unified | 469.6 | 147.5 [143.7–165.9] | 447.4 | 1.4333 → 0.1500 |
+| Wayland, 100,000-line diff | — | 150.7 [141.2–172.5] | 440.5 | — → 0.0000 |
+| XWayland, empty workspace | 442.5 | 147.9 [122.3–187.6] | 461.3 | 0.5000 → 3.4997 |
+| XWayland, Unified | 487.9 | 174.6 [164.7–191.7] | 497.4 | 0.3666 → 0.0000 |
+| XWayland, 100,000-line diff | — | 165.6 [145.8–277.3] | 473.6 | — → 0.0000 |
+
+| Vulkan configuration | VmRSS (KiB) Stage 01 → 01.1 | PSS (KiB) Stage 01 → 01.1 | USS (KiB) Stage 01 → 01.1 | RssAnon (KiB) Stage 01 → 01.1 |
+| --- | ---: | ---: | ---: | ---: |
+| Wayland, empty workspace | 136,168 → 137,376 | 97,778 → 98,952 | 68,500 → 69,616 | 28,600 → 30,868 |
+| Wayland, Unified | 137,484 → 135,528 | 98,921 → 97,340 | 69,472 → 68,208 | 29,264 → 29,068 |
+| Wayland, 100,000-line diff | — → 135,096 | — → 96,982 | — → 67,840 | — → 28,768 |
+| XWayland, empty workspace | 144,900 → 139,316 | 106,034 → 100,821 | 76,752 → 71,668 | 36,412 → 33,288 |
+| XWayland, Unified | 138,248 → 136,700 | 99,421 → 98,096 | 70,140 → 68,928 | 30,256 → 30,164 |
+| XWayland, 100,000-line diff | — → 136,084 | — → 97,634 | — → 68,520 | — → 29,952 |
+
+All six profiles in the main comparison stayed within the warm initialization, private memory and executable targets. Both empty workspace profiles exceeded the existing 1% idle CPU target in the main round. A preliminary build previously showed 7.4661% in Unified on Wayland and a 2,371.4 ms smoke outlier on XWayland. The main round showed 0.15% and 0% in Unified, with 0% in both 100,000-line profiles. The headless empty and diagnostic views settle without a pending repaint. Process measurements leave the cause of the native variability open, including the historical ANV/XWayland finding. Stage 01 repeat (`target/stage01.1-evidence/performance-before.log`) · Stage 01.1 Wayland (`target/stage01.1-evidence/performance-final-wayland.log`) · Stage 01.1 XWayland (`target/stage01.1-evidence/performance-final-x11.log`)
+
+A second 60-second empty-workspace run with five seconds of settling used the same binaries in reverse order. It measured `0.6000%` after refinement versus `0.0500%` on Stage 01 under Wayland, and `0.0667%` versus `1.2833%` under XWayland. The XWayland baseline spent most of those ticks in the first 10 seconds of the sample. Swapchain worker threads also accumulated ticks. The repeats establish variability across runs. They leave consistent compliance with the idle target unverified. Wayland repeat (`target/stage01.1-evidence/performance-idle-recheck.log`) · XWayland repeat (`target/stage01.1-evidence/performance-idle-recheck-x11.log`)
+
+The exact final release repeated the default empty workspace over 60 seconds after five seconds of settling. It used `0.0667%` CPU on Wayland and `0.0167%` on XWayland. Both samples met the idle target. The earlier spikes remain in the record. Final release logs (`target/stage01.1-evidence/performance-release-idle.log`)
+
+Stage 01 headless results remain in Section 5. Stage 01.1 uses the same test viewport, frames and warmups. The benchmark measures egui layout and CPU tessellation. It excludes GPU rasterization and compositor presentation. The runtime lists still mount visible rows with egui overscan. The diff mounts only the rows intersecting its viewport.
+
+| Fixture | Median (ms) Stage 01 → 01.1 | p95 (ms) Stage 01 → 01.1 |
+| --- | ---: | ---: |
+| 100 list entries | 0.098 → 0.101 | 0.179 → 0.217 |
+| 1,000 list entries | 0.083 → 0.069 | 0.116 → 0.074 |
+| 10,000 list entries | 0.083 → 0.069 | 0.095 → 0.076 |
+| 100,000 diff lines | 0.100 → 0.097 | 0.108 → 0.110 |
+
+A sample taken alongside compilation had a 1.465 ms p95 for 100 entries. The table uses the subsequent quiet run. A final-build repeat measured a 0.110 ms median and 0.176 ms p95 on the 100,000-line diff, and medians of 0.155, 0.072 and 0.098 ms on the three lists. Quiet run (`target/stage01.1-evidence/virtualized-cpu-quiet.log`) · Final run (`target/stage01.1-evidence/virtualized-cpu-final.log`)
+
+Native continuous scrolling used the XWayland application showing the 100,000-line synthetic diff. The input driver sent 120 Page Down events in 5.431 seconds with 1.040 seconds of process CPU. The before and after viewports show advancement through the fixture. The driver also exercised horizontal movement on a long line. This run measures process cost during input and does not establish frame latency, GPU time or compositor throughput. Input log (`target/stage01.1-evidence/native-input.log`) · Initial and scrolled viewports (`target/stage01.1-evidence/after/scroll-review.png`)
+
+---
+
+## 7. Stage 01.2 idle revalidation
+
+The locked release build used for the visual evidence was also used for the primary series. Each of the six cells has five independent launches with Intel RPL-P and Vulkan on GNOME/Mutter 51.1. The matrix crosses native Wayland and XWayland with the empty workspace, the Unified fixture workspace and the 100,000-line diff. It rotates profile order across rounds and runs one application at a time with no injected input. Fedora 45, Mesa 26.2.7 and XWayland 24.1.15 were recorded on this host. The harness verifies the display handle and GPU in each application's startup log.
+
+The driver waits five seconds after native initialization and measures 60 seconds per launch. CPU is the process user and system tick rate divided by elapsed wall time, expressed as a percentage of one logical core. The individual ledger preserves five-second intervals, per-thread ticks, main-thread context switch deltas and memory at both endpoints. RSS comes from `/proc/<pid>/status`. PSS and USS use `/proc/<pid>/smaps_rollup`, with USS calculated as private clean plus private dirty pages. Table memory values use end-of-window medians in KiB.
+
+An early session lock interrupted the desktop preflight. Those attempts and the isolated Mutter virtual-monitor preflight are retained separately. The counted series uses the unlocked physical desktop after the maintainer unlocked the session. A session-scoped GNOME idle inhibitor and lock-state checks kept the sample windows available. The inhibitor ended with the benchmark. The procedure issued no desktop settings writes. The observed `idle-delay` value was 300 seconds before the lock and 0 at the final readback. The source of that session preference change was outside the observed audit operations. Final settings readback (`target/stage01.2-evidence/desktop-settings-after.log`)
+
+The production binary does not expose frame counters. The investigation uses a separate audited copy built under `target/stage01.2-evidence`. It counts native frames, egui immediate and delayed repaint notifications, window focus and input events, AccessKit updates, surface configuration, suboptimal and other acquisition results, and present submissions. It leaves the WGPU integration callback in place and records its own five-second counter snapshots. These probe results explain observed runtime activity without altering the 30-sample release series or treating present submission as display timing.
+
+The application repaint calls in `main.rs` are in the opt-in smoke controller. Standard launch does not start that controller. The UI style uses zero animation duration for normal transitions. The spinner is confined to the Gallery loading example. The headless empty and synthetic views settle with no pending repaint. A separate focused-filter control distinguishes normal caret blinking from unexpected redraws of a settled window. The Orca probe runs on a private AT-SPI bus to observe accessibility updates independently.
+
+### Primary measurements
+
+All 30 full 60-second samples met the existing `< 1%` idle CPU target. The maximum was 0.4333% in the Wayland 100,000-line diff. The memory columns report end-of-window medians in KiB. The native XWayland scale guess was 1× in all 15 primary launches.
+
+| Protocol | Profile | Mean CPU % | Median % | Min % | Max % | RSS | PSS | USS | RssAnon |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Wayland | Empty workspace | 0.0133 | 0.0000 | 0.0000 | 0.0500 | 135072 | 81552 | 55844 | 28536 |
+| Wayland | Unified fixture workspace | 0.0067 | 0.0000 | 0.0000 | 0.0167 | 135872 | 82459 | 56828 | 28972 |
+| Wayland | 100,000-line diff | 0.0933 | 0.0167 | 0.0000 | 0.4333 | 135532 | 82248 | 56552 | 28780 |
+| XWayland | Empty workspace | 0.0067 | 0.0000 | 0.0000 | 0.0167 | 135364 | 84693 | 59036 | 28596 |
+| XWayland | Unified fixture workspace | 0.0800 | 0.0167 | 0.0000 | 0.3667 | 135824 | 81970 | 56320 | 29008 |
+| XWayland | 100,000-line diff | 0.0100 | 0.0167 | 0.0000 | 0.0167 | 135512 | 81695 | 56040 | 28800 |
+
+The strongest five-second interval was 4.2000% in the Wayland 100,000-line diff, from seconds 10 to 15 of round 3. Of 21 process ticks, 19 were accounted for by the main thread. Two 1.6000% intervals in the first XWayland Unified run included WSI swapchain worker ticks. The primary sampling attributes CPU time to threads but cannot attribute it to specific function calls. All 30 rows (`target/stage01.2-evidence/idle-samples.md`) · CSV (`target/stage01.2-evidence/idle-samples.csv`) · Raw samples (`target/stage01.2-evidence/idle/samples.ndjson`)
+
+### Instrumented controls and findings
+
+| Control | Settled behavior |
+| --- | --- |
+| Six ordinary scenarios, 20 seconds each | Zero native frames, repaint notifications, AccessKit updates and surface reconfigurations after settling. Process CPU ranged from 0.0000% to 0.0500%. |
+| Wayland 100,000-line diff, 60-second targeted repeat | 0.0000% CPU and zero frames, input events, repaint notifications or surface reconfigurations. The strongest short release burst was not reproduced. |
+| XWayland empty workspace, 60 seconds at a process-local 2× scale | 0.0000% CPU and zero settled frames, repaint requests or surface reconfigurations. One run leaves the historical XWayland finding open. |
+| XWayland Unified with private Orca, 20 seconds | Three AccessKit updates before the first counter snapshot. Zero settled AccessKit updates, frames, repaint requests or surface reconfigurations. |
+| XWayland focused filter, 20 seconds | 0.6500% CPU, 40 delayed notifications and 40 native frames. The source was the text caret timer. |
+| Native Wayland focused filter, exact release, 60 seconds | 30.6333% CPU with no injected input. The original 20-second instrumented control measured 32.1999%. |
+| Native Wayland focused filter, input-category probe, 30 seconds | 30.7666% CPU. The probe counted 3,591 empty IME preedits, immediate repaint notifications and native frames. Pointer, keyboard, resize, AccessKit update and surface-reconfiguration counts stayed flat. |
+| Native Wayland focused filter, experimental A/B control, 30 seconds | 0.5667% CPU, zero settled empty IME preedits and immediate notifications, 60 delayed notifications and 61 frames. The only intervention was withholding empty preedit events from the egui pass in the scratch control. |
+
+The installed winit 0.30.13 Wayland implementation produces an empty preedit when it handles a text-input `done` without a pending preedit. The installed egui-winit 0.37.0 treats IME events as a reason to repaint and sends an IME cursor-area update whenever the input queue contains an event, even when the cursor rectangle is unchanged. The event counts and the A/B intervention support that feedback loop in the tested session. The source of the separate short idle bursts remains undetermined. No production IME filtering was introduced. A production fix needs to preserve legitimate preedit cancellation and composition across input methods.
+
+Probe counters (`target/stage01.2-evidence/probe-summary.json`) · All control samples (`target/stage01.2-evidence/supplemental-samples.md`) · Release focus reproduction (`target/stage01.2-evidence/focus-follow.log`) · Scratch A/B intervention (`target/stage01.2-evidence/prepare-ime-control.py`)
+
+Build and host details (`target/stage01.2-evidence/host-graphics.log`) · Release sample procedure (`target/stage01.2-evidence/idle.py`) · Compositor progress (`target/stage01.2-evidence/measurement-follow.log`) · Probe implementation (`target/stage01.2-evidence/instrument.py`)
+
+---
+
+## 8. Stage 01.3 Wayland IME feedback
+
+With egui, eframe and egui-winit 0.37.0 and winit 0.30.13, a native Wayland cursor-area update commits text-input state. Mutter acknowledges it with `done`, which winit can turn into a preedit even when the cursor has not moved. A non-empty preedit can also be repeated by IBus during composition. egui-winit requests a frame for the IME event and ordinarily treats its presence as a reason to send the same rectangle again.
+
+The app installs a public egui end-of-pass callback only for a verified native Wayland display. Widgets process every preedit before the callback runs. The callback then removes preedits from the event list that egui-winit checks when deciding whether to resend an unchanged rectangle. Real rectangle changes, commits and focus events still reach the native integration. Upstream deduplicates at the rectangle cache and invalidates it on focus and IME activation. That change was merged after the pinned stable release. The preedit filter can be removed when the workspace updates to a stable release containing the fix. [Upstream fix](https://github.com/emilk/egui/pull/8906)
+
+With libpinyin the isolated session also exposed an eframe fallback after a redraw missed its 250 ms deadline. The fallback ran app logic without drawing widgets and forwarded an empty IME output, cancelling an active composition in a focused window. gitRUST temporarily republishes the last editor output for a focused, non-minimized window during such a logic-only cycle. The next UI pass publishes fresh widget geometry. The fallback clears stale processed events from the prior pass. eframe retains new raw input for the next UI pass. Fallback trace (`target/stage01.3-evidence/native-ime-logic-trace/description.log`)
+
+The official measurement uses a fresh release process for each 60-second interval and five seconds of settling. The 1920 × 1080 virtual monitor runs on a private GNOME Shell/Mutter instance on the same Intel GPU with wgpu/Vulkan. A private virtual keyboard and compositor focus checks isolate the samples from regular desktop input. The diagnostic views `keyboard`, `compose-summary` and `compose-description` give initial focus to the same text widgets used by the demo workspace. Separate instrumented launches check native and widget focus and distinguish caret repaint timers from immediate repaint notifications and IME cursor-area resends.
+
+| Focused scenario | Samples | Mean CPU | Median | Min | Max |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Wayland filter | 5 | 0.5300% | 0.5333% | 0.4333% | 0.6000% |
+| Wayland commit summary | 5 | 0.5833% | 0.5667% | 0.5500% | 0.6333% |
+| Wayland commit description | 5 | 0.5467% | 0.5667% | 0.4667% | 0.6167% |
+| XWayland filter | 5 | 0.6067% | 0.6000% | 0.5500% | 0.6667% |
+
+All 20 focused samples met the 1% process CPU target. The largest five-second interval was 0.8000%. The earlier 30.6333% filter reproduction used the physical GNOME session. A separate 30-second check of the archived Stage 01.2 release in the private compositor measured 0.0000% and did not reproduce that physical-session loop. The archived probe also stayed below the CPU clock's resolution while reporting focus. The report contains individual results and all four memory measures for each launch. Results (`target/stage01.3-evidence/RESULTADOS.md`) · Raw samples (`target/stage01.3-evidence/official/samples.ndjson`) · Archived release control (`target/stage01.3-evidence/matched-baseline/samples.ndjson`) · Archived probe (`target/stage01.3-evidence/matched-baseline-probe/1-wayland-filter-1.log`)
+
+In each separate 20-second focused probe, 41 native frames corresponded to 40 or 41 delayed notifications from the caret timer. The counters recorded zero immediate repaint notifications, IME events, IME cursor-area updates, AccessKit updates and surface reconfigurations after settling. Native IBus interaction was assessed separately with AccessKit active. Probe ledgers and logs (`target/stage01.3-evidence/probe/samples.ndjson`)
+
+The six abbreviated 15-second controls recorded 0.0000% CPU at the process clock's resolution. They covered the empty workspace, Unified demo and 100,000-line diff on both protocols, with no focused text editor. Abbreviated controls (`target/stage01.3-evidence/unfocused/samples.ndjson`)
+
+## 9. Future Micro- and Macro-Benchmarks (Stage 02 & Stage 09)
+
+As Git Engine and larger production data flows are introduced:
 - `benches/` will use `criterion` to measure deterministic non-UI workloads (`status --porcelain=v2 -z` parsing, unified diff chunking, commit graph indexing) against synthetic repositories of `1k`, `10k`, and `100k` tracked files.
 - UI frame-time percentiles (`p50`, `p95`, `p99`) will be measured during continuous scrolling of large diffs and commit histories.

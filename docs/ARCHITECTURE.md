@@ -1,6 +1,6 @@
 # Architecture Overview
 
-> **Document Scope:** Reflects the implemented **Stage 00 — Project Foundation** baseline and documents the target architecture for upcoming roadmap stages (`Stage 01` through `Stage 10`). Planned subsystems are explicitly labeled as not yet implemented.
+> **Document Scope:** Reflects the Stage 00 foundation and the Stage 01 native shell. [UI architecture](UI_ARCHITECTURE.md) details the presentation layer. Later roadmap stages describe the target architecture. Planned subsystems are explicitly labeled as not yet implemented.
 
 ---
 
@@ -37,12 +37,12 @@ flowchart TD
     providers --> core
 ```
 
-### Crate Responsibilities and Stage 00 Status
+### Crate Responsibilities
 
-| Crate | Stage 00 Status | Responsibility | External Dependencies (Stage 00) |
+| Crate | Status | Responsibility | External Dependencies |
 | --- | --- | --- | --- |
 | `gitrust-core` | **Implemented (Foundation)** | Pure domain models, metadata, runtime/host diagnostics, `AppState`, and deterministic `AppEvent` reducer. | None (`std` only) |
-| `gitrust-ui` | **Implemented (Provisional)** | Native `egui` views decoupled from OS windowing; headlessly testable via `egui::Context`. Definitive Design System scheduled for **Stage 01**. | `egui` |
+| `gitrust-ui` | **Implemented** | Native `egui` shell and design system decoupled from OS windowing and headlessly testable via `egui::Context`. | `egui` |
 | `gitrust-app` | **Implemented (Foundation)** | Native binary (`gitrust`), CLI flag handling, `eframe` + `wgpu` initialization, Wayland/X11 integration, and clean shutdown lifecycle. | `eframe`, `egui`, `tracing`, `tracing-subscriber` |
 | `gitrust-git` | **Boundary Only (Planned Stage 02)** | Shell-free `GitCommandSpec`, non-UTF-8 `OsString`/`PathBuf` contracts, and operation safety classes. Functional Git CLI engine scheduled for **Stage 02**. | None (`std` only) |
 | `gitrust-storage` | **Boundary Only (Planned Stage 03)** | Storage security baseline prohibiting plaintext credentials and telemetry by default. Persistent config and keychain adapters scheduled for **Stage 03 / Stage 08**. | None (`std` only) |
@@ -53,7 +53,7 @@ flowchart TD
 Per Stage 00 engineering guidelines, two intentional refinements were made relative to the reference directory skeleton:
 
 1. **Workspace Integration Tests (`crates/gitrust-app/tests/` instead of root `tests/`):** Because the root `Cargo.toml` is a **virtual Cargo manifest** (`[workspace]` without a root `[package]`), Cargo only discovers and executes integration tests placed inside member crates (`crates/*/tests/`). Placing `workspace_integration.rs` inside `crates/gitrust-app/tests/` ensures `cargo test --workspace` compiles and executes cross-crate and binary CLI integration tests automatically.
-2. **Deferred Asset and Benchmark Directories (`assets/` and `benches/`):** Empty directories with placeholder files were omitted in Stage 00. Typography and icon assets will be introduced with verified licensing in **Stage 01 (Design System)**, and `criterion` benchmarks (`benches/`) will be introduced alongside real workloads in **Stage 02 (Git Engine)** and **Stage 09 (Security and Performance)**.
+2. **Asset and Benchmark Directories (`assets/` and `benches/`).** Empty directories with placeholder files were omitted in Stage 00. Stage 01 introduces licensed typography in `crates/gitrust-ui/assets` and first-party painted icons. `criterion` benchmarks (`benches/`) will be introduced alongside real workloads in **Stage 02 (Git Engine)** and **Stage 09 (Security and Performance)**.
 3. **Supply-Chain Policy (`deny.toml`):** Added at the workspace root to enforce MIT-compatible dependency licensing and vulnerability checks in CI.
 
 ---

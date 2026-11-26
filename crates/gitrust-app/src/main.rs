@@ -1,6 +1,8 @@
-//! Native desktop entrypoint for `gitRUST` (Stage 00 — Project Foundation).
+//! Native desktop entrypoint for `gitRUST` (Stage 01 — Design System).
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+mod ime;
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -16,7 +18,7 @@ use gitrust_core::{
     AppMetadata, AppState, DEFAULT_WINDOW_SIZE, GraphicsDiagnostics, HostDiagnostics,
     MIN_WINDOW_SIZE, PACKAGE_NAME, WindowSessionProtocol,
 };
-use gitrust_ui::{FoundationView, configure_provisional_visuals};
+use gitrust_ui::{Desktop, DiagnosticView, Language, UiOptions};
 
 /// Build-time package version sourced directly from `Cargo.toml`.
 const CARGO_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -30,6 +32,7 @@ const DEFAULT_SMOKE_RESIZE: [f32; 2] = [940.0, 520.0];
 #[derive(Debug, Clone, PartialEq)]
 struct SmokeTestOptions {
     target_size: Option<[f32; 2]>,
+    initial_size: Option<[f32; 2]>,
     screenshot_ppm_path: Option<PathBuf>,
 }
 
@@ -37,18 +40,19 @@ impl Default for SmokeTestOptions {
     fn default() -> Self {
         Self {
             target_size: Some(DEFAULT_SMOKE_RESIZE),
+            initial_size: None,
             screenshot_ppm_path: None,
         }
     }
 }
 
 /// CLI execution mode parsed without pulling external argument-parser crates.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 enum LaunchMode {
     /// Normal interactive desktop window execution.
-    Interactive,
+    Interactive(UiOptions),
     /// Opens the real native window, verifies render/resize lifecycle, and closes cleanly.
-    SmokeTest(SmokeTestOptions),
+    SmokeTest(SmokeTestOptions, UiOptions),
     /// Prints version string to stdout and exits.
     PrintVersion,
     /// Prints usage summary to stdout and exits.
@@ -80,6 +84,7 @@ where
 {
     let mut iter = args.into_iter().skip(1);
     let mut smoke_enabled = false;
+    let mut ui_options = UiOptions::default();
     let mut smoke_opts = SmokeTestOptions::default();
 
     while let Some(arg) = iter.next() {
@@ -89,10 +94,50 @@ where
         match flag {
             "--version" | "-V" => return Ok(LaunchMode::PrintVersion),
             "--help" | "-h" => return Ok(LaunchMode::PrintHelp),
+            "--diagnostics" => ui_options.diagnostics = Some(DiagnosticView::Gallery),
+            "--diagnostic-view" => {
+                ui_options.diagnostics = Some(match option(&mut iter, flag)?.as_str() {
+                    "gallery" => DiagnosticView::Gallery,
+                    "unified" => DiagnosticView::Unified,
+                    "split" => DiagnosticView::Split,
+                    "history" => DiagnosticView::History,
+                    "settings" => DiagnosticView::Settings,
+                    "keyboard" => DiagnosticView::Keyboard,
+                    "compose" => DiagnosticView::Compose,
+                    "compose-summary" => DiagnosticView::ComposeSummary,
+                    "compose-description" => DiagnosticView::ComposeDescription,
+                    "repository" => DiagnosticView::Repository,
+                    "branch" => DiagnosticView::Branch,
+                    "long-diff" => DiagnosticView::LongDiff,
+                    "binary" => DiagnosticView::Binary,
+                    "stress-diff" => DiagnosticView::StressDiff,
+                    "stress-list" => DiagnosticView::StressList,
+                    _ => return Err("unknown diagnostic view".into()),
+                });
+            }
+            "--theme" => {
+                ui_options.theme = match option(&mut iter, flag)?.as_str() {
+                    "system" => egui::ThemePreference::System,
+                    "light" => egui::ThemePreference::Light,
+                    "dark" => egui::ThemePreference::Dark,
+                    _ => return Err("--theme expects system, light or dark".into()),
+                };
+            }
+            "--language" => ui_options.language = Language::from_locale(&option(&mut iter, flag)?),
+            "--scale" => {
+                ui_options.zoom = match option(&mut iter, flag)?.as_str() {
+                    "100" => 1.0,
+                    "125" => 1.25,
+                    "150" => 1.5,
+                    "200" => 2.0,
+                    _ => return Err("--scale expects 100, 125, 150 or 200".into()),
+                };
+            }
             "--smoke-test" => smoke_enabled = true,
             "--smoke-initial-size" => {
                 smoke_enabled = true;
                 smoke_opts.target_size = None;
+                smoke_opts.initial_size = None;
             }
             "--smoke-size" => {
                 smoke_enabled = true;
@@ -107,6 +152,7 @@ where
                     ));
                 };
                 smoke_opts.target_size = Some(parse_dimensions(val_str)?);
+                smoke_opts.initial_size = smoke_opts.target_size;
             }
             "--smoke-screenshot" => {
                 smoke_enabled = true;
@@ -127,10 +173,19 @@ where
     }
 
     if smoke_enabled {
-        Ok(LaunchMode::SmokeTest(smoke_opts))
+        Ok(LaunchMode::SmokeTest(smoke_opts, ui_options))
     } else {
-        Ok(LaunchMode::Interactive)
+        Ok(LaunchMode::Interactive(ui_options))
     }
+}
+
+fn option<S: AsRef<std::ffi::OsStr>>(
+    iter: &mut impl Iterator<Item = S>,
+    flag: &str,
+) -> Result<String, String> {
+    iter.next()
+        .and_then(|arg| arg.as_ref().to_str().map(ToOwned::to_owned))
+        .ok_or_else(|| format!("missing UTF-8 value for {flag}"))
 }
 
 fn print_help(metadata: &AppMetadata) {
@@ -139,6 +194,14 @@ fn print_help(metadata: &AppMetadata) {
          USAGE:\n    {bin} [OPTIONS]\n\n\
          OPTIONS:\n    -h, --help                      Show this help message and exit\n    \
          -V, --version                   Show version information and exit\n        \
+         --theme <system|light|dark> Set the initial theme\n\
+         --language <en-US|pt-BR>    Set the initial interface language\n\
+         --scale <100|125|150|200>   Set the initial interface scale\n\
+         --diagnostics              Open the component gallery and enable the sample repository\n\
+         --diagnostic-view <VIEW>   Open a sample view or stress case.\n\
+                                     gallery, unified, split, history, settings, keyboard, compose,\n\
+                                     compose-summary, compose-description,\n\
+                                     repository, branch, long-diff, binary, stress-diff, stress-list\n\
          --smoke-test                Launch native window, verify render/resize, and exit cleanly\n        \
          --smoke-initial-size        Keep default window size during --smoke-test\n        \
          --smoke-size <WxH>          Request logical viewport size '<WxH>' during --smoke-test\n        \
@@ -227,11 +290,12 @@ impl SmokeTestController {
     }
 }
 
-/// `eframe` application wrapper binding [`AppState`] and [`FoundationView`] to the native window loop.
+/// `eframe` application wrapper binding [`AppState`] and [`Desktop`] to the native window loop.
 struct GitRustApp {
     state: AppState,
-    view: FoundationView,
+    view: Desktop,
     smoke_test: Option<SmokeTestController>,
+    wayland_ime: Option<ime::WaylandIme>,
 }
 
 impl GitRustApp {
@@ -239,8 +303,8 @@ impl GitRustApp {
         cc: &eframe::CreationContext<'_>,
         metadata: AppMetadata,
         smoke_test: Option<SmokeTestOptions>,
+        ui_options: UiOptions,
     ) -> Self {
-        configure_provisional_visuals(&cc.egui_ctx);
         let protocol = detect_verified_session_protocol(cc);
         let host = HostDiagnostics::from_protocol(protocol);
         let graphics = extract_graphics_diagnostics(cc);
@@ -256,12 +320,15 @@ impl GitRustApp {
         );
 
         let state = AppState::new(metadata, host, graphics);
-        let view = FoundationView::new(&state);
+        let view = Desktop::new(&cc.egui_ctx, ui_options);
+        let wayland_ime = (protocol == WindowSessionProtocol::Wayland)
+            .then(|| ime::WaylandIme::install(&cc.egui_ctx));
 
         Self {
             state,
             view,
             smoke_test: smoke_test.map(SmokeTestController::new),
+            wayland_ime,
         }
     }
 
@@ -331,8 +398,17 @@ impl GitRustApp {
 }
 
 impl eframe::App for GitRustApp {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if let Some(ime) = &self.wayland_ime {
+            ime.preserve_during_logic(ctx);
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let events = self.view.show(ui, &self.state);
+        if let Some(ime) = &mut self.wayland_ime {
+            ime.remember_ui_output(ui.ctx());
+        }
         for event in events.into_iter_events() {
             self.state.apply(event);
         }
@@ -393,13 +469,13 @@ fn main() -> ExitCode {
             print_help(&metadata);
             ExitCode::SUCCESS
         }
-        LaunchMode::Interactive => {
+        LaunchMode::Interactive(options) => {
             init_logging();
             let native_options = build_native_options(None);
             match eframe::run_native(
                 PACKAGE_NAME,
                 native_options,
-                Box::new(move |cc| Ok(Box::new(GitRustApp::new(cc, metadata, None)))),
+                Box::new(move |cc| Ok(Box::new(GitRustApp::new(cc, metadata, None, options)))),
             ) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(err) => {
@@ -408,19 +484,21 @@ fn main() -> ExitCode {
                 }
             }
         }
-        LaunchMode::SmokeTest(smoke_opts) => {
+        LaunchMode::SmokeTest(smoke_opts, options) => {
             init_logging();
-            // On Wayland, compositor-initiated programmatic InnerSize requests may be constrained
-            // unless also reflected in initial geometry when testing minimum dimensions; we test
-            // programmatic InnerSize when target_size is set, and also pass min-size cleanly.
-            let initial_override = smoke_opts
-                .target_size
-                .filter(|size| size[0] <= MIN_WINDOW_SIZE[0] && size[1] <= MIN_WINDOW_SIZE[1]);
-            let native_options = build_native_options(initial_override);
+            // Wayland compositors may decline programmatic resize requests.
+            let native_options = build_native_options(smoke_opts.initial_size);
             match eframe::run_native(
                 PACKAGE_NAME,
                 native_options,
-                Box::new(move |cc| Ok(Box::new(GitRustApp::new(cc, metadata, Some(smoke_opts))))),
+                Box::new(move |cc| {
+                    Ok(Box::new(GitRustApp::new(
+                        cc,
+                        metadata,
+                        Some(smoke_opts),
+                        options,
+                    )))
+                }),
             ) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(err) => {
@@ -438,35 +516,57 @@ mod tests {
 
     #[test]
     fn parses_supported_cli_flags_and_rejects_invalid_combinations() {
-        assert_eq!(parse_launch_mode(["gitrust"]), Ok(LaunchMode::Interactive));
-        assert_eq!(
+        assert!(matches!(
+            parse_launch_mode(["gitrust"]),
+            Ok(LaunchMode::Interactive(UiOptions {
+                diagnostics: None,
+                ..
+            }))
+        ));
+        assert!(matches!(
             parse_launch_mode(["gitrust", "--version"]),
             Ok(LaunchMode::PrintVersion)
-        );
-        assert_eq!(
+        ));
+        assert!(matches!(
             parse_launch_mode(["gitrust", "-h"]),
             Ok(LaunchMode::PrintHelp)
-        );
-        assert_eq!(
+        ));
+        assert!(matches!(
             parse_launch_mode(["gitrust", "--smoke-test"]),
-            Ok(LaunchMode::SmokeTest(SmokeTestOptions::default()))
-        );
+            Ok(LaunchMode::SmokeTest(_, _))
+        ));
+        let mode = parse_launch_mode([
+            "gitrust",
+            "--smoke-size",
+            "640x400",
+            "--smoke-screenshot",
+            "/tmp/out.ppm",
+            "--diagnostic-view",
+            "history",
+            "--theme",
+            "dark",
+            "--language",
+            "pt-BR",
+        ])
+        .expect("valid launch options");
+        let LaunchMode::SmokeTest(smoke, options) = mode else {
+            panic!("expected smoke mode");
+        };
         assert_eq!(
-            parse_launch_mode([
-                "gitrust",
-                "--smoke-size",
-                "640x400",
-                "--smoke-screenshot",
-                "/tmp/out.ppm"
-            ]),
-            Ok(LaunchMode::SmokeTest(SmokeTestOptions {
+            smoke,
+            SmokeTestOptions {
                 target_size: Some([640.0, 400.0]),
-                screenshot_ppm_path: Some(PathBuf::from("/tmp/out.ppm")),
-            }))
+                initial_size: Some([640.0, 400.0]),
+                screenshot_ppm_path: Some(PathBuf::from("/tmp/out.ppm"))
+            }
         );
+        assert_eq!(options.diagnostics, Some(DiagnosticView::History));
+        assert_eq!(options.theme, egui::ThemePreference::Dark);
+        assert_eq!(options.language, Language::Portuguese);
         assert!(parse_launch_mode(["gitrust", "--smoke-size", "bad"]).is_err());
         assert!(parse_launch_mode(["gitrust", "--smoke-size", "50x50"]).is_err());
         assert!(parse_launch_mode(["gitrust", "--smoke-screenshot"]).is_err());
+        assert!(parse_launch_mode(["gitrust", "--scale", "101"]).is_err());
         assert!(parse_launch_mode(["gitrust", "--unknown"]).is_err());
     }
 }

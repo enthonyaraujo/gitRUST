@@ -15,9 +15,9 @@ pub const PACKAGE_NAME: &str = "gitrust";
 pub const APP_LICENSE: &str = "MIT";
 
 /// Current development stage identifier.
-pub const CURRENT_STAGE_ID: &str = "00";
+pub const CURRENT_STAGE_ID: &str = "01";
 /// Current development stage name.
-pub const CURRENT_STAGE_NAME: &str = "Project Foundation";
+pub const CURRENT_STAGE_NAME: &str = "Design System";
 
 /// Default logical window dimensions `(width, height)` in points.
 ///
@@ -186,7 +186,7 @@ pub const WORKSPACE_CRATES: [WorkspaceCrateSummary; 6] = [
     },
     WorkspaceCrateSummary {
         name: "gitrust-ui",
-        responsibility: "Provisional egui foundation view (Design System in Stage 01)",
+        responsibility: "Native application shell and design system",
         status: CrateStageStatus::ActiveInFoundation,
     },
     WorkspaceCrateSummary {
