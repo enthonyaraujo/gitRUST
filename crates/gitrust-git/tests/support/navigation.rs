@@ -486,3 +486,115 @@ fn checkout_and_merge_do_not_overwrite_ignored_files() {
         b"main\n"
     );
 }
+
+#[test]
+fn branch_comparison_counts_divergence_and_rejects_moved_tips() {
+    let fixture = Fixture::new(&[]);
+    fixture.commit("base");
+    fixture.git(["switch", "-c", "topic"]);
+    fixture.write("topic", "topic");
+    fixture.commit("on topic");
+    fixture.git(["switch", "main"]);
+    fixture.write("main", "main");
+    let head = fixture.commit("on main");
+    let service = engine(EngineOptions::default());
+    let repo = trust(&service, fixture.path());
+    let topic = branch(&service, &repo, "refs/heads/topic");
+    assert!(matches!(
+        inspect(
+            &service,
+            &repo,
+            Inspection::CompareBranches(head.clone(), topic.clone())
+        ),
+        TaskValue::BranchComparison(1, 1)
+    ));
+    fixture.git(["branch", "-f", "topic", "HEAD"]);
+    assert!(matches!(
+        submit(
+            &service,
+            Request::Inspect(repo, Inspection::CompareBranches(head, topic))
+        )
+        .result,
+        Err(GitError::StaleSnapshot)
+    ));
+}
+
+#[test]
+fn squash_stages_changes_without_rewriting_the_target_or_creating_merge_state() {
+    let fixture = Fixture::new(&[]);
+    let base = fixture.commit("base");
+    fixture.git(["switch", "-c", "topic"]);
+    fixture.write("topic", "from topic");
+    fixture.commit("on topic");
+    fixture.git(["switch", "main"]);
+    let service = engine(EngineOptions::default());
+    let repo = trust(&service, fixture.path());
+    let topic = branch(&service, &repo, "refs/heads/topic");
+    fixture.write("local", "keep");
+    assert!(matches!(
+        run(
+            &service,
+            &repo,
+            RefMutation::Squash(topic.clone(), author())
+        ),
+        Err(GitError::MergeDirty)
+    ));
+    assert_eq!(
+        fs::read(fixture.path().join("local")).expect("local file"),
+        b"keep"
+    );
+    fs::remove_file(fixture.path().join("local")).expect("remove fixture file");
+    outcome(
+        run(&service, &repo, RefMutation::Squash(topic, author())),
+        NavigationOutcome::SquashStaged,
+    );
+    assert_eq!(fixture.oid("HEAD"), base);
+    assert!(!fixture.path().join(".git/MERGE_HEAD").exists());
+    assert_eq!(fixture.git(["show", ":topic"]).stdout, b"from topic");
+}
+
+#[test]
+fn stash_preserves_index_worktree_and_untracked_content_with_ignored_files_in_place() {
+    let fixture = Fixture::new(&[]);
+    fixture.write("tracked", "base");
+    fixture.write(".gitignore", "ignored\n");
+    fixture.commit("base");
+    fixture.git(["config", "--local", "user.name", "Fixture"]);
+    fixture.git(["config", "--local", "user.email", "fixture@example.invalid"]);
+    fixture.write("tracked", "staged");
+    fixture.git(["add", "--", "tracked"]);
+    fixture.write("tracked", "unstaged");
+    fixture.write("new file", "untracked");
+    fixture.write("ignored", "ignored contents");
+    let service = engine(EngineOptions::default());
+    let repo = trust(&service, fixture.path());
+    outcome(
+        run(&service, &repo, RefMutation::Stash),
+        NavigationOutcome::Stashed,
+    );
+    let TaskValue::Stashes(entries) = inspect(&service, &repo, Inspection::Stashes) else {
+        panic!("expected saved stash");
+    };
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].id, fixture.oid("refs/stash").as_str());
+    assert_eq!(
+        String::from_utf8_lossy(&fixture.git(["status", "--porcelain"]).stdout),
+        ""
+    );
+    assert_eq!(
+        fixture.git(["show", "stash@{0}:tracked"]).stdout,
+        b"unstaged"
+    );
+    assert_eq!(
+        fixture.git(["show", "stash@{0}^2:tracked"]).stdout,
+        b"staged"
+    );
+    assert_eq!(
+        fixture.git(["show", "stash@{0}^3:new file"]).stdout,
+        b"untracked"
+    );
+    assert_eq!(
+        fs::read(fixture.path().join("ignored")).expect("ignored file"),
+        b"ignored contents"
+    );
+}

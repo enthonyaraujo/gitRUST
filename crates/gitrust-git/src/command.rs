@@ -125,6 +125,10 @@ pub enum Inspection {
     Navigation,
     /// Refresh navigation and remote state together.
     WorkspaceNavigation,
+    /// Compare anchored local commit tips.
+    CompareBranches(ObjectId, crate::RefTip),
+    /// Read locally stored stash entries.
+    Stashes,
     /// Local and remote-tracking references.
     Branches,
     /// Read credential-free remote and upstream state without network access.
@@ -188,6 +192,7 @@ pub(crate) enum Builtin {
     Config,
     Diff,
     ForEachRef,
+    Stash,
     RevList,
     RevParse,
     ShowRef,
@@ -222,6 +227,7 @@ impl Builtin {
             Self::Config => "config",
             Self::Diff => "diff",
             Self::ForEachRef => "for-each-ref",
+            Self::Stash => "stash",
             Self::RevList => "rev-list",
             Self::RevParse => "rev-parse",
             Self::ShowRef => "show-ref",

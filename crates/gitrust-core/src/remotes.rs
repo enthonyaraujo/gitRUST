@@ -144,6 +144,7 @@ pub enum RemoteAction {
         branch: String,
         auth: Auth,
     },
+    RebaseLocal(crate::navigation::Reference),
     ContinueRebase,
     AbortRebase,
 }

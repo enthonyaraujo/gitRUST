@@ -54,10 +54,21 @@ pub enum RefMutation {
     Delete(RefTip),
     /// Apply a merge with fast-forward allowed and commit creation deferred.
     Merge(RefTip, CommitAuthor),
+    /// Stage a squash merge for a later regular commit.
+    Squash(RefTip, CommitAuthor),
+    /// Save tracked and untracked work under refs/stash.
+    Stash,
     /// Create the merge commit from the current index.
     Finish(ObjectId, CommitDraft),
     /// Abort a merge started with a clean worktree and unchanged since start.
     Abort(Arc<AbortProof>),
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(super) enum MergeMode {
+    Standard,
+    FastForward,
+    Squash,
 }
 
 /// Current native merge state.
@@ -93,6 +104,12 @@ pub enum NavigationOutcome {
     FastForward,
     /// Three-way merge applied, awaiting resolutions or a commit.
     MergePending,
+    /// Squashed changes are staged for an ordinary commit.
+    SquashStaged,
+    /// The squash left conflicts in the index.
+    SquashConflicts,
+    /// Working changes were saved in a new stash entry.
+    Stashed,
     /// Merge commit created.
     MergeCommitted,
     /// Merge aborted.
@@ -162,6 +179,63 @@ impl Runner<'_> {
         BranchList::parse(head, output, width)
     }
 
+    pub(super) fn stashes(
+        &self,
+        repo: &TrustedRepository,
+        width: usize,
+    ) -> Result<Vec<gitrust_core::navigation::StashEntry>, GitError> {
+        let output = self.checked_local(
+            repo.repository().location(),
+            GitCommandSpec::new(Builtin::Stash).args([
+                "list",
+                "--max-count=500",
+                "--format=%H%x00%gs",
+                "--",
+            ]),
+        )?;
+        super::terminated_lines(&output.stdout)?
+            .map(|line| {
+                let (id, subject) = crate::model::split_once(line, 0)
+                    .ok_or(GitError::MalformedOutput("stash entry"))?;
+                Ok(gitrust_core::navigation::StashEntry {
+                    id: object(id, width)?.as_str().to_owned(),
+                    subject: String::from_utf8_lossy(subject).into_owned(),
+                })
+            })
+            .collect()
+    }
+
+    pub(super) fn compare_branches(
+        &mut self,
+        repo: &TrustedRepository,
+        width: usize,
+        head: &ObjectId,
+        tip: &RefTip,
+    ) -> Result<TaskValue, GitError> {
+        let list = self.branches(repo, width)?;
+        if !matches!(list.head, HeadState::Attached(_, ref id) | HeadState::Detached(ref id) if id == head)
+        {
+            return Err(GitError::StaleSnapshot);
+        }
+        let other = &tip_in(&list, tip)?.id;
+        let range = format!("{}...{}", head.as_str(), other.as_str());
+        let output = self.record(
+            repo.repository().location(),
+            GitCommandSpec::new(Builtin::RevList).args(["--left-right", "--count", &range, "--"]),
+            &[],
+            false,
+        )?;
+        let mut counts = strip_line_end(output)?.split(|byte| *byte == b'\t');
+        let (Some(ahead), Some(behind), None) = (counts.next(), counts.next(), counts.next())
+        else {
+            return Err(GitError::MalformedOutput("branch comparison"));
+        };
+        Ok(TaskValue::BranchComparison(
+            decimal(ahead, "ahead count")?,
+            decimal(behind, "behind count")?,
+        ))
+    }
+
     pub(super) fn navigation(
         &mut self,
         repo: &TrustedRepository,
@@ -221,6 +295,8 @@ impl Runner<'_> {
                     | RefMutation::Rename(..)
                     | RefMutation::Delete(_)
                     | RefMutation::Merge(..)
+                    | RefMutation::Squash(..)
+                    | RefMutation::Stash
             ) | (
                 MergeState::Active(_, _),
                 RefMutation::Finish(..) | RefMutation::Abort(_)
@@ -233,9 +309,19 @@ impl Runner<'_> {
         }
         self.control.check()?;
         let result = match operation {
-            RefMutation::Merge(tip, author) => {
-                self.start_merge(repo, width, &snapshot.refs, &status, tip, author)?
+            RefMutation::Merge(tip, author) | RefMutation::Squash(tip, author) => {
+                let HeadState::Attached(_, head) = &snapshot.refs.head else {
+                    return Err(GitError::InvalidReference);
+                };
+                let source = &local_tip(&snapshot.refs, tip)?.id;
+                let mode = if matches!(operation, RefMutation::Squash(..)) {
+                    MergeMode::Squash
+                } else {
+                    MergeMode::Standard
+                };
+                self.merge_object(repo, width, head, source, &status, author, mode)?
             }
+            RefMutation::Stash => self.stash_worktree(repo, width, &status, &snapshot.author)?,
             RefMutation::Finish(source, draft) => {
                 self.finish_merge(repo, width, &snapshot, source, draft)?
             }
@@ -342,6 +428,63 @@ impl Runner<'_> {
         Ok(())
     }
 
+    fn stash_worktree(
+        &self,
+        repo: &TrustedRepository,
+        width: usize,
+        status: &RepositoryStatus,
+        author: &CommitAuthor,
+    ) -> Result<NavigationResult, GitError> {
+        if status.branch.oid.is_none()
+            || status.entries.is_empty()
+            || status
+                .entries
+                .iter()
+                .any(|entry| matches!(entry.kind, crate::EntryKind::Unmerged { .. }))
+        {
+            return Err(GitError::StaleSnapshot);
+        }
+        let previous = self
+            .stashes(repo, width)?
+            .into_iter()
+            .next()
+            .map(|entry| entry.id);
+        let identity = write::identity(author, None)?;
+        let command = GitCommandSpec::new(Builtin::Stash).args([
+            "push",
+            "--include-untracked",
+            "--message",
+            "gitRUST",
+            "--",
+        ]);
+        let output = self.run_policy(
+            Some(repo.repository().location()),
+            command,
+            &[],
+            self.limits,
+            process::Policy::Author(&identity, false),
+            &[
+                // No caller pathspecs are accepted here. Git's stash cleanup builds
+                // its own literal pathspecs for the untracked files it archived.
+                "--no-literal-pathspecs".into(),
+                "-c".into(),
+                "maintenance.auto=false".into(),
+                "-c".into(),
+                "commit.gpgSign=false".into(),
+            ],
+        )?;
+        checked(output, false)?;
+        let next = self
+            .stashes(repo, width)?
+            .into_iter()
+            .next()
+            .map(|entry| entry.id);
+        if next.is_none() || previous == next {
+            return Err(GitError::StaleSnapshot);
+        }
+        Ok(result(NavigationOutcome::Stashed))
+    }
+
     fn validate_branch(&self, cwd: &Path, name: &str) -> Result<(), GitError> {
         if name.starts_with('-') || matches!(name, "HEAD" | "@") || name.len() > 255 {
             return Err(GitError::InvalidReference);
@@ -354,22 +497,6 @@ impl Runner<'_> {
         Ok(())
     }
 
-    fn start_merge(
-        &mut self,
-        repo: &TrustedRepository,
-        width: usize,
-        refs: &BranchList,
-        status: &RepositoryStatus,
-        tip: &RefTip,
-        author: &CommitAuthor,
-    ) -> Result<NavigationResult, GitError> {
-        let HeadState::Attached(_, head) = &refs.head else {
-            return Err(GitError::InvalidReference);
-        };
-        let tip = &local_tip(refs, tip)?.id;
-        self.merge_object(repo, width, head, tip, status, author, false)
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub(super) fn merge_object(
         &mut self,
@@ -379,7 +506,7 @@ impl Runner<'_> {
         tip: &ObjectId,
         status: &RepositoryStatus,
         author: &CommitAuthor,
-        fast_forward: bool,
+        mode: MergeMode,
     ) -> Result<NavigationResult, GitError> {
         let cwd = repo.repository().location();
         validate_merge_files(repo)?;
@@ -387,7 +514,7 @@ impl Runner<'_> {
         if self.ancestor(cwd, tip, head)? {
             return Ok(result(NavigationOutcome::Integrated));
         }
-        if fast_forward && !self.ancestor(cwd, head, tip)? {
+        if mode == MergeMode::FastForward && !self.ancestor(cwd, head, tip)? {
             return Err(GitError::Remote(
                 gitrust_core::remotes::RemoteNotice::Diverged,
             ));
@@ -397,7 +524,11 @@ impl Runner<'_> {
         }
         let identity = write::identity(author, None)?;
         let spec = GitCommandSpec::new(Builtin::Merge).args([
-            if fast_forward { "--ff-only" } else { "--ff" },
+            match mode {
+                MergeMode::Standard => "--ff",
+                MergeMode::FastForward => "--ff-only",
+                MergeMode::Squash => "--squash",
+            },
             "--no-commit",
             "--no-edit",
             "--no-gpg-sign",
@@ -421,6 +552,19 @@ impl Runner<'_> {
                 "maintenance.auto=false".into(),
             ],
         )?;
+        if mode == MergeMode::Squash {
+            if output.status.success() {
+                return Ok(result(NavigationOutcome::SquashStaged));
+            }
+            let status = self.worktree_status(repo, width, false)?;
+            if status
+                .entries
+                .iter()
+                .any(|entry| matches!(entry.kind, crate::EntryKind::Unmerged { .. }))
+            {
+                return Ok(result(NavigationOutcome::SquashConflicts));
+            }
+        }
         if merge_source(repo, width)?.as_ref() == Some(tip) {
             let abort = self.abort_proof(repo, width).ok().map(Arc::new);
             return Ok(NavigationResult {
@@ -577,7 +721,10 @@ fn tip_in<'a>(list: &'a BranchList, tip: &RefTip) -> Result<&'a BranchInfo, GitE
         .ok_or(GitError::StaleSnapshot)
 }
 
-fn local_tip<'a>(list: &'a BranchList, tip: &RefTip) -> Result<&'a BranchInfo, GitError> {
+pub(super) fn local_tip<'a>(
+    list: &'a BranchList,
+    tip: &RefTip,
+) -> Result<&'a BranchInfo, GitError> {
     let branch = tip_in(list, tip)?;
     if branch.remote_tracking {
         return Err(GitError::InvalidReference);

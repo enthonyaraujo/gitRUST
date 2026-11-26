@@ -123,6 +123,10 @@ pub enum TaskValue {
     CommitDetails(crate::CommitDetails),
     /// Branch snapshot.
     Branches(BranchList),
+    /// Distinct commit counts relative to the captured HEAD.
+    BranchComparison(u64, u64),
+    /// Stashes available in this repository.
+    Stashes(Vec<gitrust_core::navigation::StashEntry>),
     /// Sanitized remote configuration and upstream.
     Remotes(RemoteSnapshot),
     /// Terminal result of a remote or remote configuration operation.
@@ -624,6 +628,10 @@ impl Runner<'_> {
                 Ok(TaskValue::WorkspaceNavigation(Box::new((
                     navigation, remotes,
                 ))))
+            }
+            Inspection::Stashes => self.stashes(trusted, width).map(TaskValue::Stashes),
+            Inspection::CompareBranches(head, tip) => {
+                self.compare_branches(trusted, width, head, tip)
             }
             Inspection::CommitDetails(id, parent) => self
                 .details(location, id, parent.as_ref(), width)

@@ -83,6 +83,9 @@ pub enum NavigationNotice {
     Integrated,
     FastForward,
     MergePending,
+    SquashStaged,
+    SquashConflicts,
+    Stashed,
     MergeCommitted,
     MergeAborted,
     Stale,
@@ -107,6 +110,20 @@ pub enum Pagination {
     Limit,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BranchComparison {
+    pub branch: Reference,
+    pub head: String,
+    pub ahead: u64,
+    pub behind: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StashEntry {
+    pub id: String,
+    pub subject: String,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct NavigationView {
     pub version: u64,
@@ -123,6 +140,9 @@ pub struct NavigationView {
     pub author: CommitAuthor,
     pub busy: bool,
     pub notice: Option<NavigationNotice>,
+    pub comparison: Option<BranchComparison>,
+    pub stashes: Option<Arc<[StashEntry]>>,
+    pub default_branch: Option<Arc<[u8]>>,
 }
 
 #[derive(Clone, Debug)]
@@ -142,6 +162,9 @@ pub enum BranchBase {
 pub enum NavigationCommand {
     UseAllRefs(bool),
     More,
+    Compare(Reference),
+    ListStash,
+    Stash,
     Details(String, Option<String>),
     Patch(String, Option<String>, PathBuf),
     Create(String, BranchBase),
@@ -149,6 +172,8 @@ pub enum NavigationCommand {
     Rename(Reference, String),
     Delete(Reference),
     Merge(Reference, CommitAuthor),
+    Squash(Reference, CommitAuthor),
+    Rebase(Reference),
     Finish(String, CommitDraft),
     Abort,
 }

@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use gitrust_core::{
     navigation::{
-        BranchBase, Details, HistoryFile, HistoryRow, Merge, NavigationCommand, NavigationIntent,
-        NavigationNotice, Pagination, Person, Reference, Revision, SignatureKind,
+        BranchBase, BranchComparison, Details, HistoryFile, HistoryRow, Merge, NavigationCommand,
+        NavigationIntent, NavigationNotice, Pagination, Person, Reference, Revision, SignatureKind,
     },
     workspaces::Activity,
 };
@@ -24,6 +24,8 @@ pub(super) enum Read {
     Page,
     Details,
     Patch,
+    Stashes,
+    Compare(Reference, String),
 }
 
 #[derive(Default)]
@@ -109,6 +111,35 @@ impl Coordinator {
                     })
                 })
             }
+            NavigationCommand::Rebase(branch) => {
+                if let Some(remotes) = &self.view.remotes {
+                    self.on_remote(gitrust_core::remotes::RemoteIntent {
+                        version: remotes.version,
+                        action: gitrust_core::remotes::RemoteAction::RebaseLocal(branch),
+                    });
+                }
+                return;
+            }
+            NavigationCommand::ListStash => {
+                view.stashes = None;
+                view.notice = None;
+                Ok((Inspection::Stashes, Read::Stashes))
+            }
+            NavigationCommand::Compare(branch) => {
+                view.comparison = None;
+                view.notice = None;
+                let Some(head) = view.head.clone() else {
+                    return;
+                };
+                ObjectId::new(&head).and_then(|id| {
+                    tip(&branch).map(|tip| {
+                        (
+                            Inspection::CompareBranches(id, tip),
+                            Read::Compare(branch, head),
+                        )
+                    })
+                })
+            }
             NavigationCommand::Details(id, parent) => {
                 view.patch = None;
                 pair(&id, parent.as_deref())
@@ -147,6 +178,10 @@ impl Coordinator {
             NavigationCommand::Delete(branch) => tip(&branch).map(RefMutation::Delete),
             NavigationCommand::Merge(branch, author) => {
                 tip(&branch).map(|branch| RefMutation::Merge(branch, author))
+            }
+            NavigationCommand::Stash => Ok(RefMutation::Stash),
+            NavigationCommand::Squash(branch, author) => {
+                tip(&branch).map(|branch| RefMutation::Squash(branch, author))
             }
             NavigationCommand::Finish(source, draft) => {
                 ObjectId::new(&source).map(|source| RefMutation::Finish(source, draft))
@@ -230,6 +265,17 @@ impl Coordinator {
                     (None, None) => Pagination::End,
                 };
             }
+            Ok(TaskValue::Stashes(entries)) => view.stashes = Some(entries.into()),
+            Ok(TaskValue::BranchComparison(ahead, behind)) => {
+                if let Operation::NavigationRead(Read::Compare(branch, head)) = operation {
+                    view.comparison = Some(BranchComparison {
+                        branch,
+                        head,
+                        ahead,
+                        behind,
+                    });
+                }
+            }
             Ok(TaskValue::CommitDetails(detail)) => {
                 view.details = Some(Arc::new(Details {
                     revision: revision(&detail.commit),
@@ -287,6 +333,13 @@ impl Coordinator {
         view.version = self.navigation.version;
         view.identity = self.navigation.identity;
         view.busy = false;
+        let upstream = summary
+            .refs
+            .branches
+            .iter()
+            .find(|branch| branch.current)
+            .and_then(|branch| branch.upstream.as_ref());
+        view.default_branch = default_branch(&summary.refs.branches, upstream);
         view.refs = summary
             .refs
             .branches
@@ -318,6 +371,7 @@ impl Coordinator {
                 occupied: branch.occupied,
             })
             .collect();
+        view.comparison = None;
         view.author = summary.author;
         view.merge = match summary.merge {
             MergeState::Active(source, unresolved) => Merge::Active {
@@ -334,6 +388,50 @@ impl Coordinator {
         view.notice = self.navigation.message.take().or(view.notice);
         self.view.navigation = Some(view);
     }
+}
+
+fn default_branch(
+    branches: &[gitrust_git::BranchInfo],
+    upstream: Option<&ReferenceName>,
+) -> Option<Arc<[u8]>> {
+    let aliases = branches
+        .iter()
+        .filter_map(|branch| {
+            let remote = branch
+                .name
+                .as_bytes()
+                .strip_prefix(b"refs/remotes/")?
+                .strip_suffix(b"/HEAD")?;
+            let target = branch
+                .symbolic_target
+                .as_ref()?
+                .as_bytes()
+                .strip_prefix(b"refs/remotes/")?;
+            let target = target.strip_prefix(remote)?.strip_prefix(b"/")?;
+            let matches_upstream = upstream.is_some_and(|upstream| {
+                upstream
+                    .as_bytes()
+                    .strip_prefix(b"refs/remotes/")
+                    .and_then(|name| name.strip_prefix(remote))
+                    .is_some_and(|suffix| suffix.starts_with(b"/"))
+            });
+            Some((matches_upstream, remote == b"origin", target))
+        })
+        .filter(|(tracked, origin, _)| *tracked || *origin);
+    let local_name = |name: &[u8]| {
+        branches
+            .iter()
+            .find(|branch| {
+                !branch.remote_tracking
+                    && !branch.symbolic
+                    && branch.name.as_bytes().strip_prefix(b"refs/heads/") == Some(name)
+            })
+            .map(|branch| Arc::from(branch.name.as_bytes()))
+    };
+    if let Some((_, _, target)) = aliases.max_by_key(|(tracked, origin, _)| (*tracked, *origin)) {
+        return local_name(target);
+    }
+    local_name(b"main").or_else(|| local_name(b"master"))
 }
 
 fn anchor(head: Option<String>, tips: &[ObjectId], all: bool) -> Option<String> {
@@ -465,6 +563,9 @@ fn notice(outcome: NavigationOutcome) -> NavigationNotice {
         NavigationOutcome::Integrated => NavigationNotice::Integrated,
         NavigationOutcome::FastForward => NavigationNotice::FastForward,
         NavigationOutcome::MergePending => NavigationNotice::MergePending,
+        NavigationOutcome::SquashStaged => NavigationNotice::SquashStaged,
+        NavigationOutcome::SquashConflicts => NavigationNotice::SquashConflicts,
+        NavigationOutcome::Stashed => NavigationNotice::Stashed,
         NavigationOutcome::MergeCommitted => NavigationNotice::MergeCommitted,
         NavigationOutcome::MergeAborted => NavigationNotice::MergeAborted,
     }

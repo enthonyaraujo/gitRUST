@@ -26,3 +26,9 @@ For a conflict, open Changes, inspect the affected files and resolve them in an 
 **Abort merge** requires confirmation and an in-session proof held by the workspace that started the merge from a clean state. The engine compares the current Git status, merge source and exact affected file bytes. Later edits, staging, an external or restarted merge, or an unsupported file type can make abort unavailable. Conflicting edits remain in the worktree. Git's locks and normal checks govern changes made by independent Git processes. Application cancellation triggers a workspace refresh so completed effects remain visible.
 
 [ADR 0010](adr/0010-branches-history-and-merge.md)
+
+## Desktop branch commands
+
+Local comparison reports commits unique to each side using captured HEAD and reference tips. The worker validates those tips before comparing; the command uses no network. Updating from the default branch opens the normal merge review for its local counterpart. A known upstream or origin symbolic HEAD takes precedence over the conventional local main or master names.
+
+Squash uses Git to stage the combined tree and leaves commit creation to the existing composer. Conflict resolutions remain in Changes. The local non-interactive rebase uses the same safe continuation and abort proof as remote rebase and guards against rewriting signed commits or merge commits. Stash saves staged, unstaged and untracked files while keeping ignored files in place. View lists bounded local stash history and opens the selected stash commit in the existing inspector. Restore and drop remain advanced stash operations.

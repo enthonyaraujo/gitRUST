@@ -266,6 +266,7 @@ impl Runner<'_> {
                 branch,
                 auth,
             } => self.checkout_review(repo, width, request, endpoint, revision, branch, auth)?,
+            RemoteAction::RebaseLocal(branch) => self.rebase_local(repo, width, request, branch)?,
             RemoteAction::ContinueRebase | RemoteAction::AbortRebase => {
                 self.recover_rebase(repo, width, request)?
             }
@@ -854,7 +855,11 @@ impl Runner<'_> {
                 &tip,
                 &after,
                 &draft.author,
-                integration == Integration::FastForward,
+                if integration == Integration::FastForward {
+                    navigation::MergeMode::FastForward
+                } else {
+                    navigation::MergeMode::Standard
+                },
             )?;
             let mut result = RemoteResult::new(match merge.outcome {
                 NavigationOutcome::MergePending => RemoteNotice::MergePending,
@@ -866,6 +871,39 @@ impl Runner<'_> {
         } else {
             self.rebase_start(repo, width, &head, &tip, &draft.author)
         }
+    }
+
+    fn rebase_local(
+        &mut self,
+        repo: &TrustedRepository,
+        width: usize,
+        request: &RemoteRequest,
+        branch: &gitrust_core::navigation::Reference,
+    ) -> Result<RemoteResult, GitError> {
+        let status = request.status.as_ref().ok_or(GitError::StaleSnapshot)?;
+        let head = status.branch.oid.as_ref().ok_or(GitError::StaleSnapshot)?;
+        if !status.entries.is_empty()
+            || navigation::incompatible(repo)?
+            || navigation::merge_source(repo, width)?.is_some()
+        {
+            return Err(GitError::MergeDirty);
+        }
+        repo.validate_worktrees(self.control)?;
+        repo.validate_reflogs(self.control)?;
+        let refs = self.branches(repo, width)?;
+        if !matches!(&refs.head, HeadState::Attached(_, id) if id == head) {
+            return Err(GitError::StaleSnapshot);
+        }
+        let target = crate::RefTip {
+            name: ReferenceName::full(&branch.name)?,
+            id: super::object(branch.commit.as_bytes(), width)?,
+        };
+        let branch = navigation::local_tip(&refs, &target)?;
+        if branch.current {
+            return Err(GitError::InvalidReference);
+        }
+        let (draft, _) = self.draft(repo, width, false)?;
+        self.rebase_start(repo, width, head, &branch.id, &draft.author)
     }
 
     fn rebase_start(

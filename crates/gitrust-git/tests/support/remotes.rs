@@ -771,3 +771,45 @@ fn reviewed_checkout_pins_the_commit_and_preserves_local_work() {
     );
     assert!(fixture.path().join("remote").is_file());
 }
+
+#[test]
+fn local_rebase_uses_the_reviewed_branch_without_a_remote() {
+    let (fixture, engine, repo) = setup();
+    fixture.git(["switch", "-c", "topic"]);
+    fixture.write("topic", "new base");
+    let onto = fixture.commit("topic");
+    fixture.git(["switch", "main"]);
+    fixture.write("main", "local commit");
+    let before = fixture.commit("main");
+    let branch = gitrust_core::navigation::Reference {
+        name: Arc::from(b"refs/heads/topic".as_slice()),
+        label: "topic".into(),
+        commit: onto.as_str().to_owned(),
+        upstream: None,
+        divergence: None,
+        remote: false,
+        current: false,
+        occupied: false,
+    };
+    let mut stale = branch.clone();
+    stale.commit = before.as_str().to_owned();
+    assert!(matches!(
+        execute(
+            &engine,
+            &repo,
+            request(&engine, &repo, RemoteAction::RebaseLocal(stale))
+        ),
+        Err(GitError::StaleSnapshot)
+    ));
+    assert_eq!(fixture.oid("HEAD"), before);
+    assert_eq!(
+        run(&engine, &repo, RemoteAction::RebaseLocal(branch)),
+        RemoteNotice::Integrated
+    );
+    assert_eq!(fixture.oid("HEAD^"), onto);
+    assert_eq!(fixture.oid("topic"), onto);
+    assert_eq!(
+        fs::read(fixture.path().join("main")).expect("main contents"),
+        b"local commit"
+    );
+}

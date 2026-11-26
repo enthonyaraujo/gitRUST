@@ -75,6 +75,8 @@ pub struct BranchInfo {
     pub occupied: bool,
     /// This reference is symbolic.
     pub symbolic: bool,
+    /// Target of a symbolic reference, when present.
+    pub symbolic_target: Option<ReferenceName>,
     /// True for a remote-tracking reference.
     pub remote_tracking: bool,
 }
@@ -106,7 +108,12 @@ impl BranchList {
             };
             let tracking = fields.next().ok_or_else(malformed)?;
             let occupied = !fields.next().ok_or_else(malformed)?.is_empty();
-            let symbolic = !fields.next().ok_or_else(malformed)?.is_empty();
+            let symbolic = fields.next().ok_or_else(malformed)?;
+            let symbolic_target = if symbolic.is_empty() {
+                None
+            } else {
+                Some(ReferenceName::full(symbolic)?)
+            };
             if fields.next() != Some(b"".as_slice()) || fields.next().is_some() {
                 return Err(malformed());
             }
@@ -126,7 +133,8 @@ impl BranchList {
                     divergence(tracking)?
                 },
                 occupied,
-                symbolic,
+                symbolic: symbolic_target.is_some(),
+                symbolic_target,
                 upstream,
             });
         }
