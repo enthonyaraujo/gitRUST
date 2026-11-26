@@ -67,7 +67,6 @@ catalog! {
     Help => "Help", "Ajuda";
     Settings => "Settings", "Configurações";
     About => "About gitRUST", "Sobre o gitRUST";
-    Quit => "Quit gitRUST", "Sair do gitRUST";
     Workspace => "Workspace", "Área de trabalho";
     NoRepositoryShort => "None open", "Nenhum aberto";
     Unavailable => "Unavailable", "Indisponível";
@@ -79,8 +78,6 @@ catalog! {
     OptionalDescription => "Description (optional)", "Descrição (opcional)";
     NoRepository => "No repository open", "Nenhum repositório aberto";
     Intro => "Git integration is coming in a future stage. You can set the theme, language and interface scale in Settings.", "A integração com Git chegará em uma etapa futura. Você pode ajustar tema, idioma e escala da interface em Configurações.";
-    OpenRepo => "Open repository", "Abrir repositório";
-    Clone => "Clone repository", "Clonar repositório";
     NoBranch => "No branch", "Sem branch";
     Changes => "Changes", "Alterações";
     History => "History", "Histórico";

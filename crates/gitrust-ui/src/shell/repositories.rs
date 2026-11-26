@@ -2,11 +2,13 @@ use std::path::{Component, Path, PathBuf};
 
 use egui::{Button, Id, RichText, ScrollArea, ThemePreference, Ui};
 use gitrust_core::workspaces::{
-    Activity, Appearance, Checkout, Locale, Preferences, ProvisionKind, RepositoryAction,
-    RepositoryView, TransferPhase, WorkspaceIssue,
+    Activity, Appearance, Checkout, DesktopTool, Locale, Preferences, ProvisionKind,
+    RepositoryAction, RepositoryView, TransferPhase, WorkspaceIssue,
 };
 
-use super::{Desktop, UiOptions};
+use super::{
+    Desktop, UiOptions, commands::Command, navigation::Tab, remotes::Dialog as RemoteDialog,
+};
 use crate::{
     components as c,
     i18n::{Language, Text},
@@ -104,6 +106,34 @@ impl Form {
     }
 }
 
+pub(super) struct WorkspaceLayout {
+    pub tab: Tab,
+    pub has_changes: bool,
+    pub delta: f32,
+    pub language: Language,
+    pub palette: Palette,
+}
+
+impl WorkspaceLayout {
+    pub(super) fn tabs(&mut self, ui: &mut Ui, l: Language, p: Palette) {
+        let tabs = [
+            (Tab::Changes, l.text(Text::Changes)),
+            (Tab::History, l.text(Text::History)),
+        ];
+        c::tabs(
+            ui,
+            &mut self.tab,
+            if self.has_changes { &tabs } else { &tabs[1..] },
+            p,
+        );
+        ui.separator();
+    }
+}
+
+pub(super) fn single_pane(ui: &Ui) -> bool {
+    ui.available_width() < 365.0 || ui.available_height() < 223.0
+}
+
 #[derive(Debug, Default)]
 pub(super) struct ManagerUi {
     pub(super) view: RepositoryView,
@@ -113,10 +143,18 @@ pub(super) struct ManagerUi {
     pub(super) remotes: super::remotes::RemoteUi,
     pub(super) github: super::github::GithubUi,
     form: Option<Form>,
+    forget: Option<PathBuf>,
     action: Option<RepositoryAction>,
 }
 
 impl ManagerUi {
+    #[cfg(test)]
+    pub(super) fn is_clone_form(&self) -> bool {
+        self.form
+            .as_ref()
+            .is_some_and(|form| form.kind == FormKind::Clone)
+    }
+
     pub(super) fn open_form(&mut self, kind: FormKind) {
         self.form = Some(Form::new(kind));
     }
@@ -136,6 +174,10 @@ impl ManagerUi {
                 .is_none_or(|changes| !changes.busy)
     }
 
+    pub(super) fn idle(&self) -> bool {
+        self.usable() && self.view.activity == Activity::Idle
+    }
+
     pub(super) fn title(&self, l: Language) -> String {
         self.view.active.as_ref().map_or_else(
             || l.text(Text::NoRepositoryShort).to_owned(),
@@ -144,16 +186,21 @@ impl ManagerUi {
     }
 
     pub(super) fn popup(&mut self, ui: &mut Ui, p: Palette, l: Language) {
-        ui.set_min_width(240.0);
+        ui.set_width((ui.ctx().content_rect().width() - 24.0).clamp(160.0, 310.0));
         c::search(ui, Id::unique("repository-search"), l, p, &mut self.query);
         ui.separator();
-        self.recents(ui, p, l, 190.0);
+        self.recents(
+            ui,
+            p,
+            l,
+            (ui.ctx().content_rect().height() * 0.42).clamp(50.0, 220.0),
+        );
         ui.separator();
         self.form_buttons(ui, p, l, false);
     }
 
-    pub(super) fn workspace(&mut self, ui: &mut Ui, p: Palette, l: Language) {
-        if self.real_changes(ui, p, l) {
+    pub(super) fn workspace(&mut self, ui: &mut Ui, p: Palette, l: Language, delta: f32) {
+        if self.real_changes(ui, p, l, delta) {
             return;
         }
         ScrollArea::vertical()
@@ -227,6 +274,151 @@ impl ManagerUi {
             });
     }
 
+    pub(super) fn remote_dialog(&self, action: Command) -> Option<RemoteDialog> {
+        let view = self.view.remotes.as_ref()?;
+        let active = self.view.active.as_ref()?;
+        if !self.usable() || self.view.activity != Activity::Idle {
+            return None;
+        }
+        let remote = self.remotes.selected(view)?;
+        let tracked = view
+            .upstream
+            .as_ref()
+            .is_some_and(|(name, _)| name == &remote.name);
+        match action {
+            Command::Fetch if remote.fetch.is_some() => {
+                Some(RemoteDialog::Fetch(vec![remote.clone()]))
+            }
+            Command::Pull
+                if active.changes.is_some()
+                    && !view.rebase.in_progress()
+                    && tracked
+                    && remote.fetch.is_some() =>
+            {
+                Some(RemoteDialog::Pull(remote.clone()))
+            }
+            Command::Push
+                if active.changes.is_some()
+                    && !view.rebase.in_progress()
+                    && view.current.is_some()
+                    && remote.push.is_some() =>
+            {
+                Some(RemoteDialog::Push(remote.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    pub(super) fn toolbar_remote(&self, l: Language) -> (Option<Command>, String, String) {
+        let Some(view) = &self.view.remotes else {
+            return (
+                None,
+                l.text(Text::Remote).into(),
+                l.local("Loading…", "Carregando…").into(),
+            );
+        };
+        let Some(remote) = self.remotes.selected(view) else {
+            let enabled = self.view.github.workspace.is_some()
+                && !self.view.github.busy
+                && self
+                    .view
+                    .active
+                    .as_ref()
+                    .is_some_and(|active| active.changes.is_some());
+            return (
+                enabled.then_some(Command::Github),
+                l.local("Publish repository", "Publicar repositório").into(),
+                "GitHub".into(),
+            );
+        };
+        let tracked = view
+            .upstream
+            .as_ref()
+            .is_some_and(|(name, _)| name == &remote.name);
+        let (ahead, behind) = if tracked {
+            view.ahead_behind.unwrap_or_default()
+        } else {
+            (0, 0)
+        };
+        let (command, title) = if behind != 0 && self.remote_dialog(Command::Pull).is_some() {
+            (Command::Pull, l.text(Text::Pull))
+        } else if ahead != 0 && self.remote_dialog(Command::Push).is_some() {
+            (Command::Push, l.text(Text::Push))
+        } else if !tracked && self.remote_dialog(Command::Push).is_some() {
+            (Command::Push, l.local("Publish branch", "Publicar branch"))
+        } else {
+            (Command::Fetch, l.text(Text::Fetch))
+        };
+        let detail = if view.busy {
+            l.local("Working…", "Processando…").into()
+        } else if ahead != 0 || behind != 0 {
+            format!("↑ {ahead}  ↓ {behind}")
+        } else if let Some((_, time)) = view
+            .last_fetch
+            .iter()
+            .find(|(name, _)| name == &remote.name)
+        {
+            super::remotes::last_fetch_text(*time, l)
+        } else {
+            l.local("Remote", "Remoto").into()
+        };
+        (
+            self.remote_dialog(command).is_some().then_some(command),
+            format!("{title} {}", remote.name),
+            detail,
+        )
+    }
+
+    pub(super) fn focus(&mut self, action: Command) {
+        if (action, self.navigation.tab) == (Command::Find, Tab::History) {
+            self.navigation.focus_search();
+        } else {
+            self.navigation.tab = Tab::Changes;
+            self.changes.focus(action == Command::Summary);
+        }
+    }
+
+    pub(super) fn confirm_forget(&mut self) {
+        self.forget = self.view.active.as_ref().map(|active| active.path.clone());
+    }
+
+    pub(super) fn discard_all(&mut self) {
+        if let Some(view) = &self.view.changes {
+            use gitrust_core::changes::{ChangeSide, ChangesCommand, ChangesIntent};
+            let keys: Vec<_> = view
+                .rows
+                .iter()
+                .filter(|row| row.key.side != ChangeSide::Conflict)
+                .map(|row| row.key.clone())
+                .collect();
+            if !keys.is_empty() {
+                self.navigation.tab = Tab::Changes;
+                self.send(RepositoryAction::Changes(ChangesIntent {
+                    version: view.version,
+                    command: ChangesCommand::ReviewDiscard(keys),
+                }));
+            }
+        }
+    }
+
+    pub(super) fn open_desktop_target(&mut self, action: Command) {
+        if let Some(workspace) = &self.view.active {
+            let path = workspace.path.clone();
+            let action = match action {
+                Command::Terminal => RepositoryAction::OpenDesktopTool {
+                    tool: DesktopTool::Terminal,
+                    path,
+                },
+                Command::Editor => RepositoryAction::OpenDesktopTool {
+                    tool: DesktopTool::Editor,
+                    path,
+                },
+                _ => RepositoryAction::Reveal(path),
+            };
+            self.send(action);
+        }
+    }
+
     pub(super) fn remote_popup(&mut self, ui: &mut Ui, l: Language, p: Palette) {
         if let Some(view) = &self.view.remotes {
             self.remotes
@@ -249,11 +441,10 @@ impl ManagerUi {
         }
     }
 
-    fn real_changes(&mut self, ui: &mut Ui, p: Palette, l: Language) -> bool {
-        use super::navigation::Tab;
-        let Some(workspace) = self.view.active.as_ref() else {
+    fn real_changes(&mut self, ui: &mut Ui, p: Palette, l: Language, delta: f32) -> bool {
+        if self.view.active.is_none() {
             return false;
-        };
+        }
         let changes = self.view.changes.as_ref();
         let navigation = self.view.navigation.as_ref();
         if changes.is_none() && navigation.is_none() {
@@ -262,32 +453,96 @@ impl ManagerUi {
         if changes.is_none() && self.navigation.tab == Tab::Changes {
             self.navigation.tab = Tab::History;
         }
-        ui.horizontal_wrapped(|ui| {
-            let tabs = [
-                (Tab::Changes, l.text(Text::Changes)),
-                (Tab::History, l.text(Text::History)),
-                (Tab::Overview, l.local("Overview", "Visão geral")),
-            ];
-            c::tabs(
-                ui,
-                &mut self.navigation.tab,
-                if changes.is_some() { &tabs } else { &tabs[1..] },
-                p,
-            );
-            if changes.is_some_and(|changes| changes.busy)
-                || navigation.is_some_and(|view| view.busy)
-            {
+        if changes.is_some_and(|changes| changes.busy) || navigation.is_some_and(|view| view.busy) {
+            ui.horizontal_wrapped(|ui| {
                 c::loading(ui, l.local("Working…", "Processando…"), None);
                 if ui.button(l.text(Text::Cancel)).clicked() {
                     self.action = Some(RepositoryAction::Cancel);
                 }
-            } else if let Some((success, message)) =
+            });
+        } else if self.navigation.tab == Tab::Changes
+            && let Some((success, message)) =
                 changes.and_then(|changes| super::changes::notice(changes, l))
-                && self.navigation.tab == Tab::Changes
-            {
-                ui.colored_label(if success { p.success } else { p.warning }, message);
+        {
+            ui.colored_label(if success { p.success } else { p.warning }, message);
+        }
+        self.workspace_operations(ui, p, l);
+        let Some(workspace) = self.view.active.as_ref() else {
+            return false;
+        };
+        let changes = self.view.changes.as_ref();
+        let navigation = self.view.navigation.as_ref();
+        let priority = self.action.take();
+        let mut layout = WorkspaceLayout {
+            tab: self.navigation.tab,
+            has_changes: changes.is_some(),
+            delta,
+            language: l,
+            palette: p,
+        };
+        match self.navigation.tab {
+            Tab::Overview => {
+                self.action = priority;
+                return false;
             }
-        });
+            Tab::History => {
+                if let Some(view) = navigation {
+                    if let Some(action) =
+                        self.navigation
+                            .history(ui, view, changes.is_some(), l, p, &mut layout)
+                    {
+                        self.action = Some(RepositoryAction::Navigate(action));
+                    }
+                } else {
+                    layout.tabs(ui, l, p);
+                    c::loading(
+                        ui,
+                        l.local("Loading history…", "Carregando histórico…"),
+                        None,
+                    );
+                }
+            }
+            Tab::Changes => {
+                if let Some(issue) = self.view.issue {
+                    ui.colored_label(p.error, issue_text(l, issue));
+                }
+                if let Some(changes) = changes {
+                    let mut clean_action = None;
+                    if let Some(intent) = self.changes.show(
+                        ui,
+                        workspace,
+                        changes,
+                        self.view.activity == Activity::Idle
+                            && navigation.is_none_or(|view| !view.busy)
+                            && self.view.remotes.as_ref().is_none_or(|view| !view.busy),
+                        &mut layout,
+                        |ui| {
+                            clean_action = clean_workspace(ui, p, l, &self.view);
+                        },
+                    ) {
+                        self.action = Some(RepositoryAction::Changes(intent));
+                    }
+                    if clean_action.is_some() {
+                        self.action = clean_action;
+                    }
+                }
+            }
+        }
+        if priority.is_some() {
+            self.action = priority;
+        }
+        if self.navigation.tab != layout.tab {
+            self.navigation.tab = layout.tab;
+            ui.ctx().request_repaint();
+        }
+        true
+    }
+
+    fn workspace_operations(&mut self, ui: &mut Ui, p: Palette, l: Language) {
+        let Some(workspace) = &self.view.active else {
+            return;
+        };
+        let navigation = self.view.navigation.as_ref();
         if self.navigation.tab != Tab::Overview
             && self.view.destination.is_some()
             && Self::activity(ui, &self.view, l)
@@ -316,36 +571,6 @@ impl ManagerUi {
         {
             self.action = Some(action);
         }
-        match self.navigation.tab {
-            Tab::Overview => return false,
-            Tab::History => {
-                if let Some(view) = navigation
-                    && let Some(action) = self.navigation.history(ui, view, changes.is_some(), l, p)
-                {
-                    self.action = Some(RepositoryAction::Navigate(action));
-                }
-            }
-            Tab::Changes => {
-                if let Some(issue) = self.view.issue {
-                    ui.colored_label(p.error, issue_text(l, issue));
-                }
-                if let Some(changes) = changes
-                    && let Some(intent) = self.changes.show(
-                        ui,
-                        workspace,
-                        changes,
-                        self.view.activity == Activity::Idle
-                            && navigation.is_none_or(|view| !view.busy)
-                            && self.view.remotes.as_ref().is_none_or(|view| !view.busy),
-                        l,
-                        p,
-                    )
-                {
-                    self.action = Some(RepositoryAction::Changes(intent));
-                }
-            }
-        }
-        true
     }
 
     fn summary(
@@ -544,6 +769,9 @@ impl ManagerUi {
     }
 
     pub(super) fn dialogs(&mut self, ui: &Ui, p: Palette, l: Language) {
+        if self.forget_dialog(ui, p, l) {
+            return;
+        }
         if let Some(candidate) = self.view.candidate.clone() {
             let dialog = c::modal(
                 ui,
@@ -606,6 +834,49 @@ impl ManagerUi {
                 self.form = Some(form);
             }
         }
+    }
+
+    fn forget_dialog(&mut self, ui: &Ui, p: Palette, l: Language) -> bool {
+        if let Some(path) = self.forget.take()
+            && self
+                .view
+                .active
+                .as_ref()
+                .is_some_and(|active| active.path == path)
+        {
+            let dialog = c::modal(
+                ui,
+                "forget-workspace",
+                p,
+                l.local("Remove repository?", "Remover repositório?"),
+                |ui| {
+                    ui.label(filename(&path));
+                    ui.label(l.local(
+                    "Remove this entry from gitRUST. Its files and Git history stay on disk.",
+                    "Remova esta entrada do gitRUST. Os arquivos e o histórico Git ficam no disco.",
+                ));
+                    ui.horizontal_wrapped(|ui| {
+                        let cancel = ui.button(l.text(Text::Cancel));
+                        if ui.memory(|memory| memory.focused().is_none()) {
+                            cancel.request_focus();
+                        }
+                        (
+                            ui.button(l.local("Remove repository", "Remover repositório"))
+                                .clicked(),
+                            cancel.clicked(),
+                        )
+                    })
+                    .inner
+                },
+            );
+            if dialog.inner.0 {
+                self.send(RepositoryAction::Forget(path));
+            } else if !dialog.inner.1 && !dialog.should_close() {
+                self.forget = Some(path);
+            }
+            return true;
+        }
+        false
     }
 
     fn form_fields(
@@ -738,8 +1009,116 @@ fn issue_text(l: Language, issue: WorkspaceIssue) -> &'static str {
         WorkspaceIssue::Cancelled => l.local("The operation was cancelled.", "A operação foi cancelada."),
         WorkspaceIssue::OperationFailed => l.local("Git could not complete this operation. Check the destination or connection and try again.", "O Git não concluiu a operação. Confira o destino ou a conexão e tente novamente."),
         WorkspaceIssue::Transport(notice) => super::remotes::notice_text(notice, l),
+        WorkspaceIssue::DesktopToolFailed => l.local("Could not open the desktop application. Check that it is installed.", "Não foi possível abrir o aplicativo. Confira se ele está instalado."),
         WorkspaceIssue::FolderActionFailed => l.local("The system could not open the folder.", "O sistema não conseguiu abrir a pasta."),
     }
+}
+
+fn clean_workspace(
+    ui: &mut Ui,
+    p: Palette,
+    l: Language,
+    view: &RepositoryView,
+) -> Option<RepositoryAction> {
+    let workspace = view.active.as_ref()?;
+    ScrollArea::vertical()
+        .id_salt("clean-workspace")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            let width = ui.available_width().min(630.0);
+            let inset = (ui.available_width() - width) * 0.5;
+            ui.add_space((ui.available_height() * 0.09).clamp(8.0, 46.0));
+            ui.horizontal_top(|ui| {
+                ui.add_space(inset);
+                ui.vertical(|ui| {
+                    ui.set_width(width);
+                    ui.heading(l.local("No local changes", "Sem alterações locais"));
+                    ui.colored_label(
+                        p.muted,
+                        l.local(
+                            "Your working tree is clean.",
+                            "A árvore de trabalho está limpa.",
+                        ),
+                    );
+                    ui.add_space(14.0);
+                    let mut clicked = None;
+                    for (title, action) in [
+                        (
+                            l.local(
+                                "Open the repository in your editor",
+                                "Abrir o repositório no editor",
+                            ),
+                            Command::Editor,
+                        ),
+                        (
+                            l.local(
+                                "Browse the repository files",
+                                "Ver os arquivos do repositório",
+                            ),
+                            Command::FileManager,
+                        ),
+                        (
+                            l.local(
+                                "Open the repository in your browser",
+                                "Abrir o repositório no navegador",
+                            ),
+                            Command::Github,
+                        ),
+                    ] {
+                        if action == Command::Github && view.github.workspace_repo.is_none()
+                            || action == Command::Editor && !cfg!(target_os = "linux")
+                        {
+                            continue;
+                        }
+                        c::panel(p.surface, 12)
+                            .corner_radius(egui::CornerRadius::same(5))
+                            .show(ui, |ui| {
+                                ui.set_width((width - 24.0).max(80.0));
+                                let mut button = |ui: &mut Ui| {
+                                    if ui.add(Button::new(action.label(l)).frame(true)).clicked() {
+                                        clicked = Some(action);
+                                    }
+                                };
+                                if width > 445.0 {
+                                    let row_size = egui::vec2(ui.available_width(), 29.0);
+                                    ui.allocate_ui_with_layout(
+                                        row_size,
+                                        egui::Layout::left_to_right(egui::Align::Center),
+                                        |ui| {
+                                            ui.strong(title);
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                button,
+                                            );
+                                        },
+                                    );
+                                } else {
+                                    ui.strong(title);
+                                    button(ui);
+                                }
+                            });
+                        ui.add_space(4.0);
+                    }
+                    match clicked? {
+                        Command::Editor => Some(RepositoryAction::OpenDesktopTool {
+                            tool: DesktopTool::Editor,
+                            path: workspace.path.clone(),
+                        }),
+                        Command::FileManager => {
+                            Some(RepositoryAction::Reveal(workspace.path.clone()))
+                        }
+                        _ => view.github.workspace_repo.as_ref().map(|repo| {
+                            RepositoryAction::Github(gitrust_core::github::Action::Open(
+                                repo.browser(),
+                            ))
+                        }),
+                    }
+                })
+                .inner
+            })
+            .inner
+        })
+        .inner
 }
 
 impl Desktop {

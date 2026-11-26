@@ -37,6 +37,7 @@ enum Signing {
 }
 
 #[derive(Debug, Default)]
+#[allow(clippy::struct_excessive_bools)] // Independent filter, dialog and submission states.
 pub(super) struct ChangesUi {
     identity: Option<u64>,
     rows: Option<Arc<[ChangedPath]>>,
@@ -47,6 +48,9 @@ pub(super) struct ChangesUi {
     query_dirty: bool,
     filtered: Vec<usize>,
     counts: [usize; 4],
+    file_count: usize,
+    focus: Option<Id>,
+    reveal_filter: bool,
     selected: HashSet<ChangeKey>,
     current: Option<ChangeKey>,
     diff_mode: DiffMode,
@@ -67,62 +71,71 @@ impl ChangesUi {
         workspace: &Workspace,
         view: &ChangesView,
         enabled: bool,
-        l: Language,
-        p: Palette,
+        layout: &mut super::repositories::WorkspaceLayout,
+        clean: impl FnOnce(&mut Ui),
     ) -> Option<ChangesIntent> {
+        let (l, p) = (layout.language, layout.palette);
         let action = self.synchronize(view);
         let enabled = enabled && !view.busy;
-        let compact = ui.available_width() < 685.0 || ui.available_height() < 345.0;
+        let compact = super::repositories::single_pane(ui);
         let mut command = None;
-        ui.add_enabled_ui(enabled, |ui| {
-            if compact {
-                c::tabs(
-                    ui,
-                    &mut self.pane,
-                    &[
-                        (Pane::Files, l.local("Files", "Arquivos")),
-                        (Pane::Diff, l.local("Diff", "Diff")),
-                        (Pane::Commit, l.local("Commit", "Commit")),
-                    ],
-                    p,
-                );
-                command = match self.pane {
-                    Pane::Files => self.files(ui, view, l, p),
-                    Pane::Diff => self.preview(ui, view, l, p),
-                    Pane::Commit => {
-                        ScrollArea::vertical()
-                            .id_salt("compact-commit")
-                            .show(ui, |ui| self.composer(ui, workspace, l, p))
-                            .inner
-                    }
-                };
-            } else {
-                let max = (ui.available_width() - 320.0).clamp(240.0, 415.0);
-                Panel::left("changes-files")
+        if compact {
+            layout.tabs(ui, l, p);
+            c::tabs(
+                ui,
+                &mut self.pane,
+                &[
+                    (Pane::Files, l.local("Files", "Arquivos")),
+                    (Pane::Diff, l.local("Diff", "Diff")),
+                    (Pane::Commit, l.local("Commit", "Commit")),
+                ],
+                p,
+            );
+            match self.pane {
+                Pane::Files => {
+                    command = ui
+                        .add_enabled_ui(enabled, |ui| self.files(ui, view, l, p))
+                        .inner;
+                }
+                Pane::Diff if view.rows.is_empty() => clean(ui),
+                Pane::Diff => {
+                    command = ui
+                        .add_enabled_ui(enabled, |ui| self.preview(ui, view, l, p))
+                        .inner;
+                }
+                Pane::Commit => {
+                    command = self.composer(ui, workspace, l, p, enabled);
+                }
+            }
+        } else {
+            c::repository_sidebar(ui, p, layout.delta, |ui| {
+                layout.tabs(ui, l, p);
+                let target = (ui.available_height() * 0.49).clamp(124.0, 202.0);
+                let max = (ui.available_height() - 47.0).clamp(105.0, 290.0);
+                Panel::bottom("changes-composer")
+                    .default_size(target.min(max))
                     .resizable(true)
-                    .default_size(300.0_f32.min(max))
-                    .size_range(240.0..=max)
-                    .frame(c::panel(p.surface, 8))
+                    .size_range(98.0..=max)
+                    .frame(c::panel(p.surface, 4))
                     .show(ui, |ui| {
-                        Panel::bottom("changes-composer")
-                            .default_size(231.0)
-                            .resizable(true)
-                            .size_range(150.0..=270.0)
-                            .frame(c::panel(p.surface, 4))
-                            .show(ui, |ui| {
-                                command = ScrollArea::vertical()
-                                    .id_salt("full-commit")
-                                    .show(ui, |ui| self.composer(ui, workspace, l, p))
-                                    .inner;
-                            });
-                        command = self.files(ui, view, l, p).or(command.take());
+                        command = self.composer(ui, workspace, l, p, enabled);
                     });
-                command = c::panel(p.background, 8)
-                    .show(ui, |ui| self.preview(ui, view, l, p))
+                command = ui
+                    .add_enabled_ui(enabled, |ui| self.files(ui, view, l, p))
                     .inner
                     .or(command.take());
-            }
-        });
+            });
+            c::panel(p.background, 8).show(ui, |ui| {
+                if view.rows.is_empty() {
+                    clean(ui);
+                } else {
+                    command = ui
+                        .add_enabled_ui(enabled, |ui| self.preview(ui, view, l, p))
+                        .inner
+                        .or(command.take());
+                }
+            });
+        }
         if let Some(review) = &view.discard {
             command = discard_dialog(ui, review, enabled, l, p).or(command);
         }
@@ -142,6 +155,16 @@ impl ChangesUi {
         })
     }
 
+    pub(super) fn focus(&mut self, summary: bool) {
+        self.pane = if summary { Pane::Commit } else { Pane::Files };
+        self.reveal_filter |= !summary;
+        self.focus = Some(Id::unique(if summary {
+            "commit-summary"
+        } else {
+            "changes-search"
+        }));
+    }
+
     fn synchronize(&mut self, view: &ChangesView) -> Option<ChangesCommand> {
         let switched = self.identity != Some(view.identity);
         if switched {
@@ -149,6 +172,8 @@ impl ChangesUi {
             *self = Self {
                 identity: Some(view.identity),
                 diff_mode: mode,
+                reveal_filter: self.reveal_filter && self.focus.is_some(),
+                focus: self.focus.take(),
                 ..Self::default()
             };
         }
@@ -158,6 +183,12 @@ impl ChangesUi {
             .is_none_or(|old| !Arc::ptr_eq(old, &view.rows))
         {
             self.rows = Some(view.rows.clone());
+            self.file_count = view
+                .rows
+                .iter()
+                .map(|row| &row.key.path)
+                .collect::<HashSet<_>>()
+                .len();
             self.counts = [0; 4];
             for row in view.rows.iter() {
                 self.counts[side_index(row.key.side)] += 1;
@@ -217,51 +248,50 @@ impl ChangesUi {
         l: Language,
         p: Palette,
     ) -> Option<ChangesCommand> {
-        ui.horizontal_wrapped(|ui| {
-            for (side, count) in [
-                (ChangeSide::Staged, self.counts[0]),
-                (ChangeSide::Unstaged, self.counts[1]),
-                (ChangeSide::Untracked, self.counts[2]),
-                (ChangeSide::Conflict, self.counts[3]),
-            ] {
-                if count != 0 {
-                    c::badge(
-                        ui,
-                        &format!("{} {count}", side_name(side, l)),
-                        p.text,
-                        p.elevated,
-                    );
-                }
-            }
-        });
-        if c::search(ui, Id::unique("changes-search"), l, p, &mut self.query).changed() {
+        let file_count = self.file_count;
+        let count = if file_count == 1 {
+            l.local("1 changed file", "1 arquivo alterado").to_owned()
+        } else {
+            format!(
+                "{file_count} {}",
+                l.local("changed files", "arquivos alterados")
+            )
+        };
+        if view.rows.is_empty() && !self.reveal_filter {
+            ui.label(count);
+            return None;
+        }
+        let compact = ui.available_height() < 175.0 || ui.available_width() < 245.0;
+        let search = Id::unique("changes-search");
+        if self.focus == Some(search) {
+            ui.memory_mut(|memory| memory.request_focus(search));
+            self.focus = None;
+        }
+        if c::search(ui, search, l, p, &mut self.query).changed() {
             self.query_dirty = true;
         }
         if std::mem::take(&mut self.query_dirty) {
             self.filter(&view.rows);
         }
-        let mut action = self.file_actions(ui, view, l);
-        let select_shown = l.local("Select filtered files", "Selecionar arquivos filtrados");
-        let all = !self.filtered.is_empty()
-            && self
-                .filtered
-                .iter()
-                .all(|&index| self.selected.contains(&view.rows[index].key));
-        if ui
-            .add_enabled(
-                !self.filtered.is_empty(),
-                egui::Button::selectable(all, select_shown),
-            )
-            .clicked()
-        {
-            for &index in &self.filtered {
-                let key = &view.rows[index].key;
-                if all {
-                    self.selected.remove(key);
-                } else {
-                    self.selected.insert(key.clone());
-                }
+        let mut action = None;
+        ui.horizontal_wrapped(|ui| {
+            self.select_filtered(ui, view, &count, l);
+            if compact && !view.rows.is_empty() {
+                action = ui
+                    .menu_button(l.local("Index actions", "Ações do index"), |ui| {
+                        let action = self.file_actions(ui, view, l);
+                        if action.is_some() {
+                            ui.close();
+                        }
+                        action
+                    })
+                    .inner
+                    .flatten();
             }
+        });
+        if !compact {
+            self.count_badges(ui, l, p);
+            action = self.file_actions(ui, view, l);
         }
         ui.separator();
         if self.filtered.is_empty() {
@@ -288,6 +318,51 @@ impl ChangesUi {
                 }
             });
         action
+    }
+
+    fn select_filtered(&mut self, ui: &mut Ui, view: &ChangesView, label: &str, l: Language) {
+        let mut all = !self.filtered.is_empty()
+            && self
+                .filtered
+                .iter()
+                .all(|&index| self.selected.contains(&view.rows[index].key));
+        if ui
+            .add_enabled(
+                !self.filtered.is_empty(),
+                egui::Checkbox::new(&mut all, label),
+            )
+            .on_hover_text(l.local("Select filtered files", "Selecionar arquivos filtrados"))
+            .changed()
+        {
+            for &index in &self.filtered {
+                let key = &view.rows[index].key;
+                if all {
+                    self.selected.insert(key.clone());
+                } else {
+                    self.selected.remove(key);
+                }
+            }
+        }
+    }
+
+    fn count_badges(&self, ui: &mut Ui, l: Language, p: Palette) {
+        ui.horizontal_wrapped(|ui| {
+            for (side, count) in [
+                (ChangeSide::Staged, self.counts[0]),
+                (ChangeSide::Unstaged, self.counts[1]),
+                (ChangeSide::Untracked, self.counts[2]),
+                (ChangeSide::Conflict, self.counts[3]),
+            ] {
+                if count != 0 {
+                    c::badge(
+                        ui,
+                        &format!("{} {count}", side_name(side, l)),
+                        p.text,
+                        p.elevated,
+                    );
+                }
+            }
+        });
     }
 
     fn filter(&mut self, rows: &[ChangedPath]) {
@@ -514,36 +589,81 @@ impl ChangesUi {
         workspace: &Workspace,
         l: Language,
         p: Palette,
+        enabled: bool,
     ) -> Option<ChangesCommand> {
         let branch = match &workspace.checkout {
             Checkout::Branch(branch) | Checkout::Unborn(branch) => branch.as_str(),
             Checkout::Detached(_) => l.local("Detached HEAD", "HEAD destacado"),
         };
         let staged = workspace.changes.map_or(0, |counts| counts.staged);
-        ui.label(
-            RichText::new(format!(
-                "{branch} · {staged} {}",
-                l.local("staged", "no index")
-            ))
-            .strong(),
-        );
-        let signer = match self.signed {
-            Signing::None => None,
-            Signing::OpenPgp => Some("GPG"),
-            Signing::Ssh => Some("SSH"),
+        let valid = enabled
+            && !self.draft.title.trim().is_empty()
+            && (staged > 0 || self.draft.amend)
+            && !matches!(workspace.checkout, Checkout::Detached(_))
+            && workspace
+                .changes
+                .is_none_or(|counts| counts.conflicted == 0);
+        let label = if self.draft.amend {
+            l.local("Review amend", "Revisar emenda").to_owned()
+        } else {
+            format!("{} {branch}", l.local("Commit to", "Commit em"))
         };
-        if let Some(signer) = signer {
-            ui.colored_label(
-                p.accent,
-                format!("{} {signer}", l.local("Signing with", "Assinatura com")),
-            );
+        let commit = Panel::bottom("commit-submission")
+            .exact_size(31.0)
+            .frame(c::panel(p.surface, 1))
+            .show(ui, |ui| {
+                ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
+                    ui.add_enabled_ui(valid, |ui| c::primary(ui, &label, p))
+                        .inner
+                        .on_disabled_hover_text(l.local(
+                            "Enter a summary and stage the files to commit.",
+                            "Preencha o resumo e prepare os arquivos para o commit.",
+                        ))
+                        .clicked()
+                })
+                .inner
+            })
+            .inner;
+        let form_action = ScrollArea::vertical()
+            .id_salt("commit-fields")
+            .show(ui, |ui| {
+                ui.add_enabled_ui(enabled, |ui| self.composer_fields(ui, workspace, l, p))
+                    .inner
+            })
+            .inner;
+        if commit {
+            if self.draft.amend {
+                self.amend_confirmation = self.seen_version;
+            } else {
+                return Some(ChangesCommand::Commit(self.make_draft()));
+            }
         }
-        text_field(ui, l.local("Title", "Título"), &mut self.draft.title, false);
-        text_field(
+        form_action
+    }
+
+    fn composer_fields(
+        &mut self,
+        ui: &mut Ui,
+        workspace: &Workspace,
+        l: Language,
+        p: Palette,
+    ) -> Option<ChangesCommand> {
+        let id = Id::unique("commit-summary");
+        if self.focus == Some(id) {
+            self.focus = None;
+            ui.memory_mut(|memory| memory.request_focus(id));
+        }
+        c::text_field(
             ui,
+            id,
+            l.local("Summary (required)", "Resumo (obrigatório)"),
+            &mut self.draft.title,
+        );
+        c::text_area(
+            ui,
+            Id::unique("commit-description"),
             l.local("Description", "Descrição"),
             &mut self.draft.description,
-            true,
         );
         ui.horizontal_wrapped(|ui| {
             if ui
@@ -567,35 +687,20 @@ impl ChangesUi {
                     return Some(ChangesCommand::LoadAmend);
                 }
             }
-            None
-        })
-        .inner
-        .or_else(|| {
-            let commit = self.make_draft();
-            let valid = !commit.title.trim().is_empty()
-                && (staged > 0 || commit.amend)
-                && !matches!(workspace.checkout, Checkout::Detached(_))
-                && workspace
-                    .changes
-                    .is_none_or(|counts| counts.conflicted == 0);
-            let label = if self.draft.amend {
-                l.local("Review amend", "Revisar emenda")
-            } else {
-                l.local("Commit staged changes", "Commit do index")
+            let signer = match self.signed {
+                Signing::None => None,
+                Signing::OpenPgp => Some("GPG"),
+                Signing::Ssh => Some("SSH"),
             };
-            if ui
-                .add_enabled_ui(valid, |ui| c::primary(ui, label, p))
-                .inner
-                .clicked()
-            {
-                if self.draft.amend {
-                    self.amend_confirmation = self.seen_version;
-                } else {
-                    return Some(ChangesCommand::Commit(self.make_draft()));
-                }
+            if let Some(signer) = signer {
+                ui.colored_label(
+                    p.accent,
+                    format!("{} {signer}", l.local("Signing with", "Assinatura com")),
+                );
             }
             None
         })
+        .inner
     }
 
     fn make_draft(&self) -> CommitDraft {
@@ -792,6 +897,14 @@ fn discard_dialog(
     } else {
         None
     }
+}
+
+pub(super) fn can_save_or_discard(view: &ChangesView) -> bool {
+    !view.rows.is_empty()
+        && view
+            .rows
+            .iter()
+            .all(|row| row.key.side != ChangeSide::Conflict)
 }
 
 pub(super) fn notice(view: &ChangesView, l: Language) -> Option<(bool, &str)> {

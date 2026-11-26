@@ -168,7 +168,7 @@ pub(super) fn ssh_url(value: &str) -> bool {
 }
 
 #[derive(Debug)]
-enum Dialog {
+pub(super) enum Dialog {
     Add,
     Edit(Remote),
     Rename(Remote),
@@ -200,13 +200,10 @@ impl fmt::Debug for RemoteUi {
     }
 }
 
-impl RemoteUi {
-    pub(super) fn label<'a>(&'a self, view: Option<&'a RemotesView>, l: Language) -> &'a str {
-        view.and_then(|view| self.selected(view))
-            .map_or(l.local("No remote", "Sem remote"), |remote| &remote.name)
-    }
+pub(super) const REMOTE_POPUP: &str = "desktop-remote-settings";
 
-    fn selected<'a>(&self, view: &'a RemotesView) -> Option<&'a Remote> {
+impl RemoteUi {
+    pub(super) fn selected<'a>(&self, view: &'a RemotesView) -> Option<&'a Remote> {
         self.selected
             .as_ref()
             .and_then(|name| view.entries.iter().find(|remote| remote.name == *name))
@@ -507,7 +504,7 @@ impl RemoteUi {
         None
     }
 
-    fn open(&mut self, view: &RemotesView, dialog: Dialog) {
+    pub(super) fn open(&mut self, view: &RemotesView, dialog: Dialog) {
         self.name.clear();
         self.fetch.clear();
         self.push.clear();
@@ -812,6 +809,10 @@ fn divergence(ahead: u64, behind: u64, l: Language) -> String {
         (false, false) => l.local("Matches cached upstream", "Igual ao upstream local"),
     };
     format!("{value} · ↑ {ahead} ↓ {behind}")
+}
+
+pub(super) fn last_fetch_text(seconds: u64, l: Language) -> String {
+    format!("{} {}", l.local("Last fetch", "Último fetch"), utc(seconds))
 }
 
 fn utc(seconds: u64) -> String {

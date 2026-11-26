@@ -486,3 +486,63 @@ fn demo_views_stop_requesting_frames_at_rest() {
         );
     }
 }
+
+#[test]
+fn desktop_accelerators_distinguish_shift_and_respect_zoom_limits() {
+    let ctx = Context::default();
+    let mut shell = Desktop::new(&ctx, UiOptions::default());
+    shell.enable_repository_management();
+    shell.set_repository_view(gitrust_core::workspaces::RepositoryView {
+        git_available: true,
+        activity: gitrust_core::workspaces::Activity::Idle,
+        ..Default::default()
+    });
+    let ctrl_shift = Modifiers::COMMAND.plus(Modifiers::SHIFT);
+    let _ = render(
+        &ctx,
+        &mut shell,
+        RawInput {
+            events: vec![key(Key::O, ctrl_shift)],
+            ..input(0.0)
+        },
+    );
+    assert!(shell.managed.as_ref().is_some_and(ManagerUi::is_clone_form));
+    let ctx = Context::default();
+
+    let mut shell = Desktop::new(
+        &ctx,
+        UiOptions {
+            diagnostics: Some(DiagnosticView::Keyboard),
+            ..UiOptions::default()
+        },
+    );
+    for (index, (key_code, zoom)) in [
+        (Key::Equals, 1.25),
+        (Key::Equals, 1.5),
+        (Key::Equals, 2.0),
+        (Key::Equals, 2.0),
+        (Key::Num0, 1.0),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let _ = render(
+            &ctx,
+            &mut shell,
+            RawInput {
+                events: vec![
+                    key(key_code, Modifiers::COMMAND),
+                    Event::Key {
+                        key: key_code,
+                        physical_key: Some(key_code),
+                        pressed: false,
+                        repeat: false,
+                        modifiers: Modifiers::COMMAND,
+                    },
+                ],
+                ..input(1.0 + f64::from(u32::try_from(index).expect("small index")))
+            },
+        );
+        assert!((shell.options.zoom - zoom).abs() < f32::EPSILON);
+    }
+}

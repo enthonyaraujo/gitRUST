@@ -461,6 +461,25 @@ impl eframe::App for GitRustApp {
             if let Some(action) = self.view.take_repository_action() {
                 workspaces.send(action);
             }
+            if events.show_logs() {
+                let host = self.state.host;
+                let graphics = &self.state.graphics;
+                let log = format!(
+                    "gitRUST {}\nOS: {} ({})\nSession: {}\nRenderer: {}\nBackend: {:?}\nAdapter: {:?}\nDevice type: {:?}\nDriver: {:?}\n",
+                    self.state.metadata.version,
+                    host.operating_system,
+                    host.architecture,
+                    host.session_protocol.as_str(),
+                    graphics.renderer,
+                    graphics.backend_api,
+                    graphics.adapter_name,
+                    graphics.device_type,
+                    graphics.driver_description,
+                );
+                workspaces.send(gitrust_core::workspaces::RepositoryAction::ShowRuntimeLog(
+                    log,
+                ));
+            }
             let preferences = self.view.preferences();
             if preferences != self.last_preferences {
                 self.last_preferences = preferences;

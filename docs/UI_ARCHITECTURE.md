@@ -1,12 +1,13 @@
 # Native UI architecture
 
-The binary owns eframe, wgpu, platform diagnostics, and native window lifecycle. `gitrust-ui` owns presentation and depends on egui and gitrust-core. It returns the existing stack-allocated resize and close events. Core stays independent of egui. The UI crate performs no repository discovery, file I/O, network I/O or Git subprocess execution.
+The binary owns eframe, wgpu, platform diagnostics, and native window lifecycle. `gitrust-ui` owns presentation and depends on egui and gitrust-core. It returns stack-allocated lifecycle events and delegates desktop actions to the coordinator. Core stays independent of egui. The UI crate performs no repository discovery, file I/O, network I/O or Git subprocess execution.
 
 | Module | Responsibility |
 | --- | --- |
 | `theme` | Light/Dark palettes, semantic Git colors, dimensions, font roles and embedded font registration |
 | `components` | Shared widget compositions, keyboard-aware virtual lists and shell primitives |
 | `shell` | Workspace, selection, menus, status bar, responsive layout, preferences and dialogs |
+| `shell::commands` | Localized desktop menu order, key bindings, availability and action routing |
 | `diff` | Visual alignment and indexing, unified/split rendering, inline changed spans and copy |
 | `demo` | Read-only sample data and its presentation adapter |
 | `gallery` | Diagnostic component pages, state scenarios and stress datasets |
@@ -16,7 +17,11 @@ The binary owns eframe, wgpu, platform diagnostics, and native window lifecycle.
 
 The decorated window retains native move, resize and system controls. The in-window app menu follows the File, Edit, View, Repository, Branch, Help convention and collapses into one menu at narrow widths. The menus are rendered in egui on each desktop platform. The file preview combines navigation and file identity in the compact header to preserve room for the diff. Integration with the native macOS global menu bar is deferred.
 
-The regular workspace starts empty with Settings available. Diagnostic mode adds gallery and sample-workspace navigation, clearly identifies sample data, and keeps all Git commands disabled. The Changes sidebar shows the draft composer when enough vertical space remains for the file list. A shorter layout presents the same draft in a dialog. The active branch is context and confirmation clears only the sample text in memory. Theme, locale and scale remain in memory for the current application session.
+An open repository shows the repository and branch selectors first, followed by the applicable fetch, pull, push or publish action and remote settings. Menus and keyboard shortcuts open the same reviewed flows. File manager, terminal, editor, browser and diagnostic log actions are handled outside rendering. The Linux terminal and editor shortcuts use installed native applications from known executable paths. The Help log action exports the current window and graphics diagnostics to the application data directory.
+
+Changes and History share a resizable sidebar. The Changes composer has a fixed submit control while its fields and the file list scroll separately. Short file panels group stage, unstage and discard under Index actions. At very small logical viewport sizes, single-pane tabs keep the list, diff and composer reachable. The clean worktree lists available editor, file manager and GitHub actions in the main pane. Menus, selectors and dialogs constrain their content to the viewport, including at 200% scale. The existing palette, typography and accessible widget labels apply throughout.
+
+The regular workspace starts empty with Options available. Diagnostic mode exposes the gallery and sample workspace and clearly identifies sample data. The diagnostic composer edits only its in-memory draft. Interactive launches persist theme, locale and scale as local preferences.
 
 ```sh
 gitrust
@@ -40,7 +45,7 @@ Use `ListSelection::show` with an item count, a position-to-key function and a r
 
 `TextDiff` stores a prepared, aligned list of visual lines and indexes unified lines at construction. The renderer can access a visible row by index in either mode. Paired lines highlight the segment between their common prefix and suffix using UTF-8 boundaries. Both modes use a standard two-axis scroll area. Split mode uses the same horizontal offset for both panes and keeps their gutters and hunk headers pinned. The viewport converts its vertical bounds to a visible row range. The stress diff derives each requested row from its index. Binary files and empty diffs have separate states.
 
-The current diff serves static fixture text. A future adapter can supply owned presentation data from Git Engine output and preserve line ownership, ordering and hunk alignment. The UI layer has no Git parser, commit-graph builder or syntax-highlighting dependency. Native drag selection is limited to rendered labels. The explicit Copy entire diff command returns the full unified body in either layout. It preserves source Unicode and tabs. The rendered view expands tabs at four-column stops, and native text selection copies displayed text. The sample body has no repository file headers.
+Diagnostic views display static fixture text. Repository workspaces display worker-indexed Git patches and preserve line ownership, ordering and hunk alignment. The UI layer has no Git parser, commit-graph builder or syntax-highlighting dependency. Native drag selection is limited to rendered labels. The explicit Copy entire diff command returns the full unified body in either layout. It preserves source Unicode and tabs. The rendered view expands tabs at four-column stops, and native text selection copies displayed text. The sample body has no repository file headers.
 
 ## Stage 01.2 verification
 

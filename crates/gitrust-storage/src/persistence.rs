@@ -105,6 +105,15 @@ impl Store {
         }
     }
 
+    /// Save a sanitized runtime log in the local application data folder.
+    /// # Errors
+    /// Returns a storage error if the log cannot be saved.
+    pub fn save_runtime_log(&self, log: &str) -> Result<PathBuf, StorageError> {
+        let folder = self.recent.with_file_name("logs");
+        replace_file(&folder.join("runtime.log"), log.as_bytes())?;
+        Ok(folder)
+    }
+
     /// Load preferences, using defaults on first run.
     ///
     /// # Errors
@@ -358,6 +367,10 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), StorageError> {
     {
         return Err(StorageError::Version);
     }
+    replace_file(path, bytes)
+}
+
+fn replace_file(path: &Path, bytes: &[u8]) -> Result<(), StorageError> {
     let parent = path.parent().ok_or(StorageError::Invalid)?;
     fs::create_dir_all(parent)?;
     let mut file = tempfile::NamedTempFile::new_in(parent)?;

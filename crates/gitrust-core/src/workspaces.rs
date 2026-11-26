@@ -190,6 +190,8 @@ pub enum WorkspaceIssue {
     Transport(crate::remotes::RemoteNotice),
     /// Native folder action failed.
     FolderActionFailed,
+    /// External desktop tool is unavailable or could not be opened.
+    DesktopToolFailed,
 }
 
 /// Data consumed by the repository workspace view.
@@ -229,6 +231,15 @@ pub struct RepositoryView {
     pub progress: Option<TransferProgress>,
 }
 
+/// Native application to launch for the active workspace.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DesktopTool {
+    /// The system terminal at the active workspace.
+    Terminal,
+    /// Visual Studio Code at the active workspace.
+    Editor,
+}
+
 /// Intent sent by the native view to the worker coordinator.
 #[derive(Clone)]
 pub enum RepositoryAction {
@@ -254,8 +265,12 @@ pub enum RepositoryAction {
     Forget(PathBuf),
     /// Reveal an existing folder.
     Reveal(PathBuf),
+    /// Launch a known native tool for the active workspace.
+    OpenDesktopTool { tool: DesktopTool, path: PathBuf },
     /// Reinspect the current workspace.
     Refresh,
+    /// Persist the current runtime diagnostics and open their folder.
+    ShowRuntimeLog(String),
     /// The native window regained focus.
     Focus,
     /// Initialize a repository in a new directory.
@@ -289,7 +304,9 @@ impl std::fmt::Debug for RepositoryAction {
             Self::Authorize { .. } => "Authorize",
             Self::Forget(_) => "Forget",
             Self::Reveal(_) => "Reveal",
+            Self::OpenDesktopTool { .. } => "OpenDesktopTool",
             Self::Refresh => "Refresh",
+            Self::ShowRuntimeLog(_) => "ShowRuntimeLog",
             Self::Focus => "Focus",
             Self::Create { .. } => "Create",
             Self::Clone { .. } | Self::CloneRemote { .. } => "Clone",

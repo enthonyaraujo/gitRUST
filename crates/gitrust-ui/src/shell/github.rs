@@ -126,7 +126,11 @@ impl GithubUi {
             self.installation = None;
             self.page = 1;
             self.pull_page = 1;
-            self.form = None;
+            if self.form.is_some() && self.account.is_some() && self.tab == Tab::Pulls {
+                self.pull_repo.clone_from(&view.workspace_repo);
+            } else if !matches!(self.form, Some(Form::Publish { local: true, .. })) {
+                self.form = None;
+            }
         }
         ui.heading("GitHub");
         c::tabs(
@@ -705,21 +709,7 @@ impl GithubUi {
                 .button(l.local("Create pull request", "Criar pull request"))
                 .clicked()
             {
-                let source = view.workspace_repo.as_ref().unwrap_or(&repo);
-                self.source_owner = source.owner().into();
-                self.source_repo = source.name().into();
-                self.head = view.workspace_branch.clone().unwrap_or_default();
-                self.base = view
-                    .repositories
-                    .iter()
-                    .find(|entry| entry.key == repo)
-                    .map_or(String::new(), |entry| entry.default_branch.clone());
-                self.owner = repo.owner().into();
-                self.remote = repo.name().into();
-                self.name.clear();
-                self.description.clear();
-                self.flag = true;
-                self.form = Some(Form::Pull);
+                self.open_pull(view, &repo);
             }
             if ui
                 .button(l.local("Open GitHub Actions", "Abrir GitHub Actions"))
@@ -931,6 +921,37 @@ impl GithubUi {
                     }
                 });
         }
+    }
+
+    pub(super) fn publish_workspace(&mut self, view: &View) {
+        self.tab = Tab::Repositories;
+        self.open_publish(view, true, None);
+    }
+
+    pub(super) fn create_workspace_pull(&mut self, view: &View) {
+        if let Some(repo) = &view.workspace_repo {
+            self.tab = Tab::Pulls;
+            self.pull_repo = Some(repo.clone());
+            self.open_pull(view, repo);
+        }
+    }
+
+    fn open_pull(&mut self, view: &View, repo: &RepositoryKey) {
+        let source = view.workspace_repo.as_ref().unwrap_or(repo);
+        self.source_owner = source.owner().into();
+        self.source_repo = source.name().into();
+        self.head = view.workspace_branch.clone().unwrap_or_default();
+        self.base = view
+            .repositories
+            .iter()
+            .find(|entry| &entry.key == repo)
+            .map_or(String::new(), |entry| entry.default_branch.clone());
+        self.owner = repo.owner().into();
+        self.remote = repo.name().into();
+        self.name.clear();
+        self.description.clear();
+        self.flag = true;
+        self.form = Some(Form::Pull);
     }
 
     fn open_publish(&mut self, view: &View, local: bool, resume: Option<RepositoryKey>) {

@@ -36,6 +36,7 @@ impl Desktop {
                     self.dialog = Dialog::None;
                 }
             }
+            Dialog::Shortcuts => self.shortcuts_dialog(ui, l, p),
             Dialog::About => {
                 let r = c::modal(ui, "about", p, l.text(Text::About), |ui| {
                     ui.label(format!(
@@ -101,6 +102,23 @@ impl Desktop {
                     };
                 }
             }
+        }
+    }
+    fn shortcuts_dialog(&mut self, ui: &Ui, l: Language, p: Palette) {
+        let dialog = c::modal(
+            ui,
+            "desktop-shortcuts",
+            p,
+            l.local("Keyboard shortcuts", "Atalhos de teclado"),
+            |ui| {
+                ScrollArea::vertical()
+                    .max_height((ui.ctx().content_rect().height() - 120.0).max(55.0))
+                    .show(ui, |ui| Self::shortcuts(ui, l));
+                ui.button(l.text(Text::Close)).clicked()
+            },
+        );
+        if dialog.inner || dialog.should_close() {
+            self.dialog = Dialog::None;
         }
     }
 }

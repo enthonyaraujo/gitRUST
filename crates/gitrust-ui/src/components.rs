@@ -1,7 +1,7 @@
 use egui::{
-    Align, Button, Color32, Frame, Id, Key, Label, Layout, Margin, Modifiers, Panel, Response,
-    RichText, Role, ScrollArea, Sense, Stroke, TextEdit, TextStyle, Ui, Vec2, Widget, WidgetInfo,
-    pos2, vec2,
+    Align, Button, Color32, FontId, Frame, Id, Key, Label, Layout, Margin, Modifiers, Panel, Rect,
+    Response, RichText, Role, ScrollArea, Sense, Stroke, StrokeKind, TextEdit, TextStyle, Ui, Vec2,
+    Widget, WidgetInfo, pos2, vec2,
 };
 
 use crate::i18n::{Language, Text};
@@ -43,6 +43,7 @@ pub(crate) enum Icon {
     Back,
     Branch,
     Remote,
+    Chevron,
     Settings,
     Search,
     Close,
@@ -55,7 +56,11 @@ pub(crate) enum Icon {
 impl Icon {
     pub(crate) fn show(self, ui: &mut Ui, dimension: f32, tint: Color32) {
         let (r, _) = ui.allocate_exact_size(Vec2::splat(dimension), Sense::hover());
-        let pen = ui.painter_at(r);
+        self.paint(&ui.painter_at(r), r, tint);
+    }
+
+    fn paint(self, pen: &egui::Painter, r: Rect, tint: Color32) {
+        let dimension = r.width();
         let point = |x, y| pos2(r.left() + dimension * x, r.top() + dimension * y);
         let stroke = Stroke::new((dimension / 12.0).max(1.15), tint);
         let line = |a, b, c, d| pen.line_segment([point(a, b), point(c, d)], stroke);
@@ -96,6 +101,10 @@ impl Icon {
                     line(x + 0.09, y, 0.85, y);
                     dot(x, y, 0.085);
                 }
+            }
+            Self::Chevron => {
+                line(0.25, 0.40, 0.50, 0.64);
+                line(0.50, 0.64, 0.75, 0.40);
             }
             Self::Remote => {
                 line(0.18, 0.35, 0.82, 0.35);
@@ -356,47 +365,103 @@ pub(crate) fn menu_choice(ui: &mut Ui, label: &str, selected: bool, p: Palette) 
 
 pub(crate) fn context_button(
     ui: &mut Ui,
+    width: f32,
     icon: Icon,
     label: &str,
     value: &str,
     interactive: bool,
     p: Palette,
 ) -> Response {
-    let mut job = egui::text::LayoutJob::default();
-    job.append(
-        label,
-        0.0,
-        egui::TextFormat::simple(egui::FontId::proportional(11.5), p.muted),
+    let (rect, response) = ui.allocate_exact_size(
+        vec2(width, 42.0),
+        if interactive {
+            Sense::click()
+        } else {
+            Sense::hover()
+        },
     );
-    job.append(
-        "\n",
-        0.0,
-        egui::TextFormat::simple(egui::FontId::proportional(11.5), p.muted),
-    );
-    job.append(
-        value,
-        0.0,
-        egui::TextFormat::simple(
-            egui::FontId::new(14.0, weight()),
-            if interactive { p.text } else { p.disabled },
-        ),
-    );
-    if interactive {
-        job.append(
-            "  ▾",
-            0.0,
-            egui::TextFormat::simple(egui::FontId::proportional(12.0), p.muted),
+    let painter = ui.painter_at(rect);
+    if response.hovered() && interactive {
+        painter.rect_filled(rect, size::RADIUS, p.hover);
+    }
+    if response.has_focus() {
+        painter.rect_stroke(
+            rect,
+            size::RADIUS,
+            Stroke::new(1.0, p.focus),
+            StrokeKind::Inside,
         );
     }
-    ui.horizontal(|ui| {
-        icon.show(ui, size::ICON, p.muted);
-        if interactive {
-            flat_button(ui, job, false, p).accessible_name(format!("{label}, {value}"))
+    let left = rect.min.x + if width >= 105.0 { 29.0 } else { 6.0 };
+    if width >= 105.0 {
+        let origin = pos2(rect.min.x + 5.0, rect.center().y - size::ICON * 0.5);
+        icon.paint(
+            &painter,
+            Rect::from_min_size(origin, Vec2::splat(size::ICON)),
+            p.muted,
+        );
+    }
+    let dropdown = interactive && matches!(icon, Icon::Repo | Icon::Branch);
+    let right = if dropdown {
+        Icon::Chevron.paint(
+            &painter,
+            Rect::from_center_size(
+                pos2(rect.right() - 11.0, rect.center().y),
+                Vec2::splat(12.0),
+            ),
+            p.muted,
+        );
+        rect.right() - 21.0
+    } else {
+        rect.right() - 6.0
+    };
+    let remote = matches!(icon, Icon::Remote);
+    for (text, strong, y) in [(label, remote, 5.0), (value, !remote, 21.0)] {
+        let (color, font) = if strong {
+            (
+                if interactive { p.text } else { p.disabled },
+                FontId::new(14.0, weight()),
+            )
         } else {
-            ui.add(Label::new(job).selectable(false))
+            (p.muted, FontId::proportional(11.5))
+        };
+        let mut job =
+            egui::text::LayoutJob::simple(text.to_owned(), font, color, (right - left).max(10.0));
+        job.wrap.max_rows = 1;
+        painter.galley(pos2(left, rect.min.y + y), painter.layout_job(job), color);
+    }
+    response.widget_info(|| {
+        WidgetInfo::labeled(Role::Button, interactive, format!("{label}, {value}"))
+    });
+    response.on_hover_text(format!("{label} · {value}"))
+}
+
+pub(crate) fn adjust_panel(ui: &Ui, name: &'static str, delta: f32) {
+    if delta != 0.0 {
+        let id = ui.scope_id().with_salt(egui::IdSalt::new(name));
+        if let Some(mut state) = egui::containers::panel::PanelState::load(ui.ctx(), id) {
+            state.outer_rect.max.x =
+                (state.outer_rect.max.x + delta).max(state.outer_rect.min.x + 1.0);
+            ui.ctx().data_mut(|data| data.insert_persisted(id, state));
         }
-    })
-    .inner
+    }
+}
+
+pub(crate) fn repository_sidebar(ui: &mut Ui, p: Palette, delta: f32, body: impl FnOnce(&mut Ui)) {
+    let width = ui.available_width();
+    let min = if width < 590.0 {
+        (width * 0.41).max(136.0)
+    } else {
+        230.0
+    };
+    let max = (width - 226.0).max(min).min(460.0);
+    adjust_panel(ui, "repository-sidebar", delta);
+    Panel::left("repository-sidebar")
+        .resizable(true)
+        .default_size((width * 0.37).clamp(min, max))
+        .size_range(min..=max)
+        .frame(panel(p.surface, size::SM))
+        .show(ui, body);
 }
 
 pub(crate) fn panel(fill: Color32, padding: i8) -> Frame {

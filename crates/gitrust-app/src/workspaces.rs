@@ -18,8 +18,8 @@ use std::{
 
 use crossbeam_channel::{Receiver, Sender, after, bounded, never, select, unbounded};
 use gitrust_core::workspaces::{
-    Activity, ChangeCounts, Checkout, Preferences, ProvisionKind, RepositoryAction, RepositoryView,
-    TransferProgress, Workspace, WorkspaceIssue,
+    Activity, ChangeCounts, Checkout, DesktopTool, Preferences, ProvisionKind, RepositoryAction,
+    RepositoryView, TransferProgress, Workspace, WorkspaceIssue,
 };
 use gitrust_git::{
     CloneRepository, CreateRepository, EngineOptions, EntryKind, FileChange, GitEngine, GitError,
@@ -385,11 +385,9 @@ impl Coordinator {
             RepositoryAction::Open(path) => self.open(path),
             RepositoryAction::Authorize { path, accepted } => self.authorize(&path, accepted),
             RepositoryAction::Forget(path) => self.forget(&path),
-            RepositoryAction::Reveal(path) => {
-                if reveal(&path).is_err() {
-                    self.view.issue = Some(WorkspaceIssue::FolderActionFailed);
-                }
-            }
+            RepositoryAction::Reveal(_)
+            | RepositoryAction::OpenDesktopTool { .. }
+            | RepositoryAction::ShowRuntimeLog(_) => self.desktop_action(action),
             RepositoryAction::Refresh => self.refresh(),
             RepositoryAction::Focus => {
                 if self.view.active.is_some() {
@@ -441,6 +439,37 @@ impl Coordinator {
                     self.view.storage_issue = true;
                 }
             }
+        }
+    }
+
+    fn desktop_action(&mut self, action: RepositoryAction) {
+        match action {
+            RepositoryAction::Reveal(path) => {
+                if reveal(&path).is_err() {
+                    self.view.issue = Some(WorkspaceIssue::FolderActionFailed);
+                }
+            }
+            RepositoryAction::OpenDesktopTool { tool, path } => {
+                if self
+                    .view
+                    .active
+                    .as_ref()
+                    .is_some_and(|active| active.path == path)
+                {
+                    self.view.issue = launch_desktop_tool(tool, &path)
+                        .err()
+                        .map(|_| WorkspaceIssue::DesktopToolFailed);
+                }
+            }
+            RepositoryAction::ShowRuntimeLog(log) => {
+                self.view.issue = self
+                    .store
+                    .as_ref()
+                    .and_then(|store| store.save_runtime_log(&log).ok())
+                    .is_none_or(|path| reveal(&path).is_err())
+                    .then_some(WorkspaceIssue::FolderActionFailed);
+            }
+            _ => {}
         }
     }
 
@@ -848,6 +877,58 @@ fn counts(status: &RepositoryStatus) -> ChangeCounts {
         }
     }
     counts
+}
+
+#[cfg(target_os = "linux")]
+fn launch_desktop_tool(tool: DesktopTool, path: &Path) -> std::io::Result<()> {
+    use std::process::{Command, Stdio};
+
+    let path = path.canonicalize()?;
+    if !path.is_dir() {
+        return Err(std::io::ErrorKind::NotADirectory.into());
+    }
+    let candidates: &[&str] = match tool {
+        DesktopTool::Editor => &["/usr/bin/code", "/usr/local/bin/code", "/usr/bin/codium"],
+        DesktopTool::Terminal => &[
+            "/usr/bin/gnome-terminal",
+            "/usr/bin/kgx",
+            "/usr/bin/konsole",
+            "/usr/bin/xfce4-terminal",
+        ],
+    };
+    let executable = candidates
+        .iter()
+        .find(|candidate| Path::new(candidate).is_file())
+        .ok_or(std::io::ErrorKind::NotFound)?;
+    let mut command = Command::new(executable);
+    match tool {
+        DesktopTool::Editor => {
+            command.args(["--new-window", "--"]).arg(&path);
+        }
+        DesktopTool::Terminal => {
+            command
+                .arg(if *executable == "/usr/bin/konsole" {
+                    "--workdir"
+                } else {
+                    "--working-directory"
+                })
+                .arg(&path);
+        }
+    }
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    thread::Builder::new()
+        .name("gitrust-desktop-tool".into())
+        .spawn(move || child.wait())?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn launch_desktop_tool(_tool: DesktopTool, _path: &Path) -> std::io::Result<()> {
+    Err(std::io::ErrorKind::Unsupported.into())
 }
 
 fn reveal(path: &Path) -> std::io::Result<()> {

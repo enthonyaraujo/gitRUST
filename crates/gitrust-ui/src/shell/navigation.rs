@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
-use egui::{Button, Id, Panel, RichText, ScrollArea, Stroke, TextEdit, Ui, pos2, vec2};
+use egui::{Button, Id, RichText, ScrollArea, Stroke, TextEdit, Ui, pos2, vec2};
 use gitrust_core::{
     changes::{CommitAuthor, CommitDraft, CommitSigning},
     navigation::{
@@ -8,6 +8,11 @@ use gitrust_core::{
         NavigationNotice, NavigationView, Pagination, Reference, SignatureKind,
     },
     workspaces::Checkout,
+};
+
+use super::{
+    commands::Command as MenuCommand,
+    repositories::{WorkspaceLayout, single_pane},
 };
 
 use crate::{
@@ -41,8 +46,12 @@ enum Form {
     Rename(Reference),
     Delete(Reference),
     Merge(Reference),
+    Squash(Reference),
+    Rebase(Reference),
+    Stash,
     Finish(String),
     Abort,
+    Choose(MenuCommand),
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -58,6 +67,10 @@ pub(super) struct NavigationUi {
     pub tab: Tab,
     pane: Pane,
     branch_query: String,
+    choose_query: String,
+    compare_waiting: bool,
+    stash_waiting: bool,
+    focus_search: bool,
     branch: Option<Arc<[u8]>>,
     form: Option<(u64, Form)>,
     input: String,
@@ -75,6 +88,69 @@ pub(super) struct NavigationUi {
 }
 
 impl NavigationUi {
+    pub(super) fn focus_search(&mut self) {
+        self.pane = Pane::Revisions;
+        self.focus_search = true;
+    }
+
+    pub(super) fn menu_available(view: Option<&NavigationView>, command: MenuCommand) -> bool {
+        let Some(view) = view.filter(|view| !view.busy) else {
+            return false;
+        };
+        match command {
+            MenuCommand::NewBranch => view.head.is_some(),
+            MenuCommand::Rename => view.refs.iter().any(|branch| branch.current),
+            MenuCommand::Delete => candidates(view, command).next().is_some(),
+            MenuCommand::Merge | MenuCommand::Squash | MenuCommand::Rebase => {
+                view.refs.iter().any(|branch| branch.current)
+                    && candidates(view, command).next().is_some()
+            }
+            MenuCommand::Update => {
+                view.refs.iter().any(|branch| branch.current)
+                    && view.default_branch.as_ref().is_some_and(|name| {
+                        view.refs
+                            .iter()
+                            .any(|branch| &branch.name == name && !branch.current)
+                    })
+            }
+            MenuCommand::Compare => {
+                view.head.is_some() && candidates(view, command).next().is_some()
+            }
+            _ => false,
+        }
+    }
+
+    pub(super) fn show_stashes(&mut self, view: &NavigationView) -> NavigationIntent {
+        self.stash_waiting = true;
+        intent(view, Command::ListStash)
+    }
+
+    pub(super) fn open_menu(&mut self, view: &NavigationView, command: MenuCommand) {
+        self.choose_query.clear();
+        let form = match command {
+            MenuCommand::NewBranch => Form::Create(BranchBase::Head),
+            MenuCommand::Stash => Form::Stash,
+            MenuCommand::Rename => {
+                let Some(branch) = view.refs.iter().find(|branch| branch.current) else {
+                    return;
+                };
+                Form::Rename(branch.clone())
+            }
+            MenuCommand::Update => {
+                let Some(branch) = view
+                    .refs
+                    .iter()
+                    .find(|branch| view.default_branch.as_ref() == Some(&branch.name))
+                else {
+                    return;
+                };
+                Form::Merge(branch.clone())
+            }
+            _ => Form::Choose(command),
+        };
+        self.open(view, form);
+    }
+
     pub(super) fn branch_picker(
         &mut self,
         ui: &mut Ui,
@@ -83,7 +159,7 @@ impl NavigationUi {
         l: Language,
         p: Palette,
     ) -> Option<NavigationIntent> {
-        ui.set_min_width(280.0);
+        ui.set_width((ui.ctx().content_rect().width() - 24.0).clamp(175.0, 360.0));
         c::search(
             ui,
             Id::unique("branch-filter"),
@@ -92,31 +168,38 @@ impl NavigationUi {
             &mut self.branch_query,
         );
         let query = self.branch_query.to_lowercase();
-        ScrollArea::vertical().max_height(230.0).show(ui, |ui| {
-            for (remote, label) in [
-                (false, l.local("Local branches", "Branches locais")),
-                (
-                    true,
-                    l.local("Remote-tracking references", "Referências remotas locais"),
-                ),
-            ] {
-                ui.strong(label);
-                for entry in view.refs.iter().filter(|item| {
-                    item.remote == remote && item.label.to_lowercase().contains(&query)
-                }) {
-                    let caption = if entry.current {
-                        format!("{} · HEAD", entry.label)
-                    } else {
-                        entry.label.clone()
-                    };
-                    if c::menu_choice(ui, &caption, self.branch.as_ref() == Some(&entry.name), p)
+        ScrollArea::vertical()
+            .max_height((ui.ctx().content_rect().height() * 0.36).clamp(56.0, 270.0))
+            .show(ui, |ui| {
+                for (remote, label) in [
+                    (false, l.local("Local branches", "Branches locais")),
+                    (
+                        true,
+                        l.local("Remote-tracking references", "Referências remotas locais"),
+                    ),
+                ] {
+                    ui.strong(label);
+                    for entry in view.refs.iter().filter(|item| {
+                        item.remote == remote && item.label.to_lowercase().contains(&query)
+                    }) {
+                        let caption = if entry.current {
+                            format!("{} · HEAD", entry.label)
+                        } else {
+                            entry.label.clone()
+                        };
+                        if c::menu_choice(
+                            ui,
+                            &caption,
+                            self.branch.as_ref() == Some(&entry.name),
+                            p,
+                        )
                         .clicked()
-                    {
-                        self.branch = Some(entry.name.clone());
+                        {
+                            self.branch = Some(entry.name.clone());
+                        }
                     }
                 }
-            }
-        });
+            });
         let entry = view
             .refs
             .iter()
@@ -268,6 +351,7 @@ impl NavigationUi {
         writable: bool,
         l: Language,
         p: Palette,
+        layout: &mut WorkspaceLayout,
     ) -> Option<NavigationIntent> {
         if self.root != view.root {
             self.root.clone_from(&view.root);
@@ -275,6 +359,7 @@ impl NavigationUi {
             self.pane = Pane::Revisions;
         }
         if view.root.is_none() {
+            layout.tabs(ui, l, p);
             if !view.refs.is_empty()
                 && ui
                     .button(l.local("Show all branches", "Mostrar todas as branches"))
@@ -287,8 +372,8 @@ impl NavigationUi {
         }
         let mut command =
             (view.pagination == Pagination::Initial && !view.busy).then_some(Command::More);
-        let compact = ui.available_width() < 690.0 || ui.available_height() < 290.0;
-        if compact {
+        if single_pane(ui) {
+            layout.tabs(ui, l, p);
             c::tabs(
                 ui,
                 &mut self.pane,
@@ -309,14 +394,10 @@ impl NavigationUi {
             };
             command = chosen.or(command);
         } else {
-            Panel::left("real-history-commits")
-                .default_size(390.0)
-                .size_range(235.0..=(ui.available_width() - 240.0))
-                .resizable(true)
-                .frame(c::panel(p.surface, 8))
-                .show(ui, |ui| {
-                    command = self.revisions(ui, view, l, p).or(command.take());
-                });
+            c::repository_sidebar(ui, p, layout.delta, |ui| {
+                layout.tabs(ui, l, p);
+                command = self.revisions(ui, view, l, p).or(command.take());
+            });
             let mut show_patch = self.pane == Pane::Diff;
             c::tabs(
                 ui,
@@ -347,6 +428,9 @@ impl NavigationUi {
         l: Language,
         p: Palette,
     ) -> Option<Command> {
+        if std::mem::take(&mut self.focus_search) {
+            ui.memory_mut(|memory| memory.request_focus(Id::unique("history-search")));
+        }
         let changed = c::search(ui, Id::unique("history-search"), l, p, &mut self.query).changed();
         let changed_rows = self
             .rows
@@ -616,17 +700,31 @@ impl NavigationUi {
         l: Language,
         p: Palette,
     ) -> Option<NavigationIntent> {
+        if self.stash_waiting && self.form.is_none() {
+            return self.stash_dialog(ui, view, l, p);
+        }
+        if self.compare_waiting && self.form.is_none() {
+            self.comparison_dialog(ui, view, l, p);
+            return None;
+        }
         let (version, form) = self.form.take()?;
         if version != view.version {
             return None;
+        }
+        if let Form::Choose(command) = form {
+            return self.choose_dialog(ui, view, l, p, command);
         }
         let heading = match &form {
             Form::Create(_) => l.local("Create branch", "Criar branch"),
             Form::Rename(_) => l.local("Rename branch", "Renomear branch"),
             Form::Delete(_) => l.local("Delete integrated branch", "Excluir branch integrada"),
             Form::Merge(_) => l.local("Review merge", "Revisar merge"),
+            Form::Squash(_) => l.local("Confirm squash merge", "Confirmar merge com squash"),
+            Form::Rebase(_) => l.local("Confirm rebase", "Confirmar rebase"),
+            Form::Stash => l.local("Stash working changes", "Guardar alterações locais"),
             Form::Finish(_) => l.local("Create merge commit", "Criar commit de merge"),
             Form::Abort => l.local("Confirm merge abort", "Confirmar aborto do merge"),
+            Form::Choose(_) => unreachable!(),
         };
         let dialog = c::modal(ui, "navigation-operation", p, heading, |ui| {
             ScrollArea::vertical()
@@ -650,6 +748,9 @@ impl NavigationUi {
                 Form::Rename(branch) => Command::Rename(branch, self.input.trim().to_owned()),
                 Form::Delete(branch) => Command::Delete(branch),
                 Form::Merge(branch) => Command::Merge(branch, self.author.clone()),
+                Form::Squash(branch) => Command::Squash(branch, self.author.clone()),
+                Form::Rebase(branch) => Command::Rebase(branch),
+                Form::Stash => Command::Stash,
                 Form::Finish(source) => Command::Finish(
                     source,
                     CommitDraft {
@@ -665,11 +766,160 @@ impl NavigationUi {
                     },
                 ),
                 Form::Abort => Command::Abort,
+                Form::Choose(_) => unreachable!(),
             };
             return Some(intent(view, command));
         }
         if !dialog.inner.1 && !dialog.should_close() {
             self.form = Some((version, form));
+        }
+        None
+    }
+
+    fn stash_dialog(
+        &mut self,
+        ui: &Ui,
+        view: &NavigationView,
+        l: Language,
+        p: Palette,
+    ) -> Option<NavigationIntent> {
+        let dialog = c::modal(
+            ui,
+            "local-stashes",
+            p,
+            l.local("Stashed changes", "Alterações guardadas"),
+            |ui| {
+                let mut selected = None;
+                if let Some(entries) = &view.stashes {
+                    if entries.is_empty() {
+                        ui.label(l.local("No stashed changes", "Nenhuma alteração guardada"));
+                    } else {
+                        ScrollArea::vertical()
+                            .max_height((ui.ctx().content_rect().height() - 140.0).max(44.0))
+                            .show_rows(ui, 28.0, entries.len(), |ui, rows| {
+                                for index in rows {
+                                    let entry = &entries[index];
+                                    if ui
+                                        .add(
+                                            Button::new(format!(
+                                                "stash@{{{index}}} · {}",
+                                                entry.subject
+                                            ))
+                                            .truncate(),
+                                        )
+                                        .clicked()
+                                    {
+                                        selected = Some(entry.id.clone());
+                                    }
+                                }
+                            });
+                    }
+                } else if view.busy {
+                    c::loading(
+                        ui,
+                        l.local("Reading local stashes…", "Lendo alterações guardadas…"),
+                        None,
+                    );
+                } else {
+                    ui.label(view.notice.map_or(
+                        l.local("Stashes unavailable", "Alterações guardadas indisponíveis"),
+                        |notice| notice_text(notice, l),
+                    ));
+                }
+                (ui.button(l.text(Text::Close)).clicked(), selected)
+            },
+        );
+        self.stash_waiting = !dialog.inner.0 && dialog.inner.1.is_none() && !dialog.should_close();
+        let selected = dialog.inner.1?;
+        self.tab = Tab::History;
+        self.pane = Pane::Details;
+        self.root.clone_from(&view.root);
+        self.selected = Some(selected.clone());
+        Some(intent(view, Command::Details(selected, None)))
+    }
+
+    fn comparison_dialog(&mut self, ui: &Ui, view: &NavigationView, l: Language, p: Palette) {
+        let dialog = c::modal(
+            ui,
+            "branch-comparison",
+            p,
+            l.local("Branch comparison", "Comparação de branches"),
+            |ui| {
+                if let Some(result) = &view.comparison {
+                    ui.strong(&result.branch.label);
+                    ui.label(format!(
+                        "HEAD {} ↔ {}",
+                        &result.head[..result.head.len().min(12)],
+                        &result.branch.commit[..result.branch.commit.len().min(12)]
+                    ));
+                    ui.label(format!(
+                        "{} {}",
+                        l.local("Only on current branch:", "Apenas na branch atual:"),
+                        result.ahead
+                    ));
+                    ui.label(format!(
+                        "{} {}",
+                        l.local("Only on selected branch:", "Apenas na branch selecionada:"),
+                        result.behind
+                    ));
+                } else if view.busy {
+                    c::loading(
+                        ui,
+                        l.local("Comparing local branches…", "Comparando branches locais…"),
+                        None,
+                    );
+                } else {
+                    ui.label(view.notice.map_or(
+                        l.local("Comparison no longer available", "Comparação indisponível"),
+                        |notice| notice_text(notice, l),
+                    ));
+                }
+                ui.button(l.text(Text::Close)).clicked()
+            },
+        );
+        self.compare_waiting = !dialog.inner && !dialog.should_close();
+    }
+
+    fn choose_dialog(
+        &mut self,
+        ui: &Ui,
+        view: &NavigationView,
+        l: Language,
+        p: Palette,
+        command: MenuCommand,
+    ) -> Option<NavigationIntent> {
+        let dialog = c::modal(ui, "choose-branch", p, command.label(l), |ui| {
+            c::search(
+                ui,
+                Id::unique("choose-local-branch"),
+                l,
+                p,
+                &mut self.choose_query,
+            );
+            let query = self.choose_query.to_lowercase();
+            ScrollArea::vertical()
+                .max_height((ui.ctx().content_rect().height() - 150.0).clamp(54.0, 310.0))
+                .show(ui, |ui| {
+                    candidates(view, command)
+                        .filter(|reference| reference.label.to_lowercase().contains(&query))
+                        .find(|reference| ui.button(&reference.label).clicked())
+                        .cloned()
+                })
+                .inner
+        });
+        if let Some(branch) = dialog.inner {
+            match command {
+                MenuCommand::Compare => {
+                    self.compare_waiting = true;
+                    return Some(intent(view, Command::Compare(branch)));
+                }
+                MenuCommand::Delete => self.open(view, Form::Delete(branch)),
+                MenuCommand::Squash => self.open(view, Form::Squash(branch)),
+                MenuCommand::Rebase => self.open(view, Form::Rebase(branch)),
+                _ => self.open(view, Form::Merge(branch)),
+            }
+        } else if !dialog.should_close() {
+            self.form = Some((view.version, Form::Choose(command)));
         }
         None
     }
@@ -737,8 +987,40 @@ impl NavigationUi {
             Form::Abort => {
                 ui.label(l.local("Restore the pre-merge state. Aborting is blocked if the merge content has changed.", "Restaurar o estado anterior ao merge. O aborto é bloqueado se o conteúdo do merge tiver mudado."));
             }
+            Form::Squash(branch) => {
+                ui.strong(&branch.label);
+                ui.label(l.local(
+                    "Squash the selected branch into the current working tree. Review the staged changes before creating a regular commit.",
+                    "Combine as alterações da branch selecionada na árvore atual. Revise o index antes de criar um commit normal.",
+                ));
+            }
+            Form::Rebase(branch) => {
+                ui.strong(&branch.label);
+                ui.label(l.local(
+                    "Reapply the current branch on the selected branch. This rewrites commit IDs and requires a clean worktree.",
+                    "Reaplique a branch atual sobre a selecionada. Isso reescreve os hashes e exige uma árvore de trabalho limpa.",
+                ));
+            }
+            Form::Stash => {
+                ui.label(l.local(
+                    "Save staged, unstaged and untracked changes in a local stash. The saved changes are removed from the working tree. Ignored files stay in place.",
+                    "Guarde em um stash local as alterações no index, fora do index e os arquivos não rastreados. As alterações guardadas saem da árvore de trabalho. Arquivos ignorados ficam no lugar.",
+                ));
+            }
+            Form::Choose(_) => unreachable!(),
         }
     }
+}
+
+fn candidates(view: &NavigationView, command: MenuCommand) -> impl Iterator<Item = &Reference> {
+    view.refs.iter().filter(move |branch| {
+        !branch.current
+            && match command {
+                MenuCommand::Compare => true,
+                MenuCommand::Delete => !branch.remote && !branch.occupied,
+                _ => !branch.remote,
+            }
+    })
 }
 
 fn intent(view: &NavigationView, command: Command) -> NavigationIntent {
@@ -877,6 +1159,18 @@ fn notice_text(notice: NavigationNotice, l: Language) -> &'static str {
         N::BranchUpdated => l.local("Branch updated.", "Branch atualizada."),
         N::Integrated => l.local("Branch already integrated.", "Branch já integrada."),
         N::FastForward => l.local("Fast-forward completed.", "Fast-forward concluído."),
+        N::SquashStaged => l.local(
+            "Squashed changes staged for review",
+            "Alterações combinadas no index para revisão",
+        ),
+        N::SquashConflicts => l.local(
+            "Resolve squash conflicts in Changes before committing",
+            "Resolva os conflitos do squash em Alterações antes do commit",
+        ),
+        N::Stashed => l.local(
+            "Working changes saved in a local stash",
+            "Alterações guardadas em um stash local",
+        ),
         N::MergePending => l.local(
             "Merge applied. Review the state before finishing.",
             "Merge aplicado. Revise o estado antes de concluir.",
