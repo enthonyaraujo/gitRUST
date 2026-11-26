@@ -1,6 +1,6 @@
 [package]
 name = "gitrust-providers"
-description = "Remote Git hosting provider integration boundary for gitRUST (Stage 08 target)."
+description = "Remote Git hosting provider integration boundary for gitRUST (Stage 09 target)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

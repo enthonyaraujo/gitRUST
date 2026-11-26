@@ -36,7 +36,7 @@ gitRUST/
 │   ├── gitrust-ui/         # Native egui shell, design tokens, diff views, and diagnostics
 │   ├── gitrust-git/        # Shell-free Git command spec boundary (Stage 02 target)
 │   ├── gitrust-storage/    # Storage & OS keychain policy boundary (Stage 03 target)
-│   └── gitrust-providers/  # Hosting provider security boundary (Stage 08 target)
+│   └── gitrust-providers/  # Hosting provider security boundary (Stage 09 target)
 ├── docs/                   # Architecture, roadmap, build, security, performance, and ADRs
 ├── .github/                # Multi-platform CI workflows and issue templates
 ├── Cargo.toml              # Workspace manifest, shared dependencies, and strict lints

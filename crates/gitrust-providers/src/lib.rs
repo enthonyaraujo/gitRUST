@@ -2,7 +2,7 @@
 //!
 //! # Stage 00 Status
 //! Provider integrations are **not implemented** in Stage 00 and are scheduled
-//! for **Stage 08 (Provider Integrations)**. No HTTP client or network stack is
+//! for **Stage 09 (Provider Integrations)**. No HTTP client or network stack is
 //! compiled into the workspace during Stage 00.
 
 use gitrust_core::CrateStageStatus;

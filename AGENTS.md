@@ -24,7 +24,7 @@ Maintain a strict Directed Acyclic Graph (DAG) across Cargo workspace crates:
 - `gitrust-core` -> zero external dependencies where practical; pure domain state, models, events, and rules. Must never depend on `egui`, `eframe`, OS keychains, or subprocess execution.
 - `gitrust-git` -> depends on `gitrust-core` (and approved Git/async crates when implemented in Stage 02). Must never depend on `gitrust-ui`, `gitrust-storage`, or `gitrust-providers`.
 - `gitrust-storage` -> depends on `gitrust-core`. Handles local settings and OS credential store boundaries.
-- `gitrust-providers` -> depends on `gitrust-core`. Handles remote hosting APIs (Stage 08+).
+- `gitrust-providers` -> depends on `gitrust-core`. Handles remote hosting APIs (Stage 09+).
 - `gitrust-ui` -> depends on `egui` and `gitrust-core`. Keep decoupled from `eframe` bootstrap so views remain headlessly testable via `egui::Context`.
 - `gitrust-app` -> top-level binary wiring crates together with `eframe` and `wgpu`.
 

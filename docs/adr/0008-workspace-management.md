@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed for Stage 03 review.
+Accepted. Stage 03 passed functional validation on Linux and was integrated into `develop` at `dc9a6eb`. Desktop validation across all supported platforms is scheduled for Stage 07. [PR #6](https://github.com/enthonyaraujo/gitRUST/pull/6) · [Merge CI](https://github.com/enthonyaraujo/gitRUST/actions/runs/45848058298)
 
 ## Decision
 
