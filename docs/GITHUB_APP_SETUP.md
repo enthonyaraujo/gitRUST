@@ -7,7 +7,7 @@ A maintainer supplies the Client ID of a GitHub App owned by the gitRUST project
 3. Enable **Device Flow** and leave expiring user access tokens enabled. Keep the app private during maintainer testing. To distribute later, review the public listing and choose **Any account** for installation availability.
 4. Set the repository permissions below. Save, then copy the **Client ID** from the app's general settings. The App ID, private key, and client secret are separate.
 5. Install the app on the intended personal account and choose specific test repositories. A private app installs only on its owner account. To test another account or organization, make the app public for installations and obtain that account owner's approval. Select only the disposable repositories authorized for the test. Installing the App and authorizing it as a user are separate steps.
-6. Open **Settings → GitHub Accounts** in gitRUST, enter the Client ID and choose **Sign in to GitHub**. Copy the shown code and open the official authorization page in the system browser. After pairing, use **Refresh account and access** to view installations and repositories.
+6. Choose **Sign in to GitHub.com** on the first-run screen or in **Settings → GitHub Accounts**. Enter the Client ID when asked. For a distribution build, set `GITRUST_GITHUB_CLIENT_ID` in the build environment to the public Client ID of the owned app. Never supply a client secret or private key. Copy the shown code and open the official authorization page in the system browser. After pairing, use **Refresh account and access** to view installations and repositories.
 
 | Repository permission | Level | Workflow |
 | --- | --- | --- |

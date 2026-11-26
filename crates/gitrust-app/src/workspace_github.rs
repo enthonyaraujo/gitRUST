@@ -10,7 +10,7 @@ use gitrust_core::{
     workspaces::Checkout,
 };
 use gitrust_providers::github::Cancellation;
-use gitrust_storage::GithubBindings;
+use gitrust_storage::{GithubBindings, Store};
 
 use super::Coordinator;
 use crate::github_actor::{self, Effect, Job, Message};
@@ -38,6 +38,31 @@ impl Coordinator {
         {
             self.view.github.client_id = client;
             self.github.bindings = bindings;
+        }
+    }
+
+    pub(super) fn initialize_welcome(&mut self) {
+        let completed = self.store.as_ref().map(Store::welcome_completed);
+        self.view.offer_welcome = self.view.recent.paths.is_empty()
+            && self.view.github.client_id.is_empty()
+            && !self.view.storage_issue
+            && matches!(completed, Some(Ok(false)));
+        if self.view.github.client_id.is_empty()
+            && let Some(id) = option_env!("GITRUST_GITHUB_CLIENT_ID")
+                .filter(|id| gitrust_providers::github::ClientId::new(id).is_ok())
+        {
+            self.view.github.client_id = id.into();
+        }
+    }
+
+    pub(super) fn complete_welcome(&mut self) {
+        if std::mem::take(&mut self.view.offer_welcome)
+            && self
+                .store
+                .as_ref()
+                .is_some_and(|store| store.complete_welcome().is_err())
+        {
+            self.view.storage_issue = true;
         }
     }
 
@@ -270,7 +295,15 @@ impl Coordinator {
         self.view.github.workspace = previous_view.workspace;
         self.view.github.workspace_repo = previous_view.workspace_repo;
         self.sync_github_workspace();
-        if previous_client != self.view.github.client_id {
+        if self.view.github.client_id.is_empty() {
+            self.view.github.client_id.clone_from(&previous_client);
+        }
+        if self.view.github.active.is_some() && !cancelled {
+            self.complete_welcome();
+        }
+        if self.view.github.active.is_some()
+            && (previous_client != self.view.github.client_id || previous_view.active.is_none())
+        {
             self.save_github();
         }
         match result.effect {
@@ -390,16 +423,42 @@ impl Coordinator {
 }
 
 fn open_browser(url: &str) {
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
+    use std::process::{Command, Stdio};
+
+    if !gitrust_providers::github::browser_url_allowed(url) {
+        return;
+    }
     #[cfg(target_os = "linux")]
-    if let Ok(mut child) = std::process::Command::new("/usr/bin/gio")
-        .args(["open", "--", url])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+    let mut command = {
+        let mut command = Command::new("/usr/bin/gio");
+        command.args(["open", "--"]);
+        command
+    };
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = Command::new("/usr/bin/open");
+        command.arg("--");
+        command
+    };
+    #[cfg(windows)]
+    let mut command = {
+        let Some(root) = std::env::var_os("SystemRoot")
+            .map(PathBuf::from)
+            .filter(|root| root.is_absolute())
+        else {
+            return;
+        };
+        Command::new(root.join("explorer.exe"))
+    };
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
+    if let Ok(mut child) = command
+        .arg(url)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
     {
         let _ = thread::Builder::new().spawn(move || child.wait());
     }
-    #[cfg(not(target_os = "linux"))]
-    let _ = url;
 }

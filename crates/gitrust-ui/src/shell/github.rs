@@ -41,6 +41,7 @@ pub(super) struct GithubUi {
     tab: Tab,
     form: Option<Form>,
     client: String,
+    configure_client: bool,
     account: Option<u64>,
     repository: Option<RepositoryKey>,
     pull: Option<u64>,
@@ -104,7 +105,7 @@ impl GithubUi {
         }
     }
 
-    fn send(&mut self, action: Action) {
+    pub(super) fn send(&mut self, action: Action) {
         self.action = Some(RepositoryAction::Github(action));
     }
 
@@ -115,9 +116,6 @@ impl GithubUi {
         l: Language,
         p: Palette,
     ) -> Option<RepositoryAction> {
-        if self.client.is_empty() && !view.client_id.is_empty() {
-            self.client.clone_from(&view.client_id);
-        }
         if self.account != view.active {
             self.account = view.active;
             self.repository = None;
@@ -143,6 +141,29 @@ impl GithubUi {
             ],
             p,
         );
+        self.authorization_status(ui, view, l, p);
+        ui.add_enabled_ui(!view.busy, |ui| match self.tab {
+            Tab::Accounts => self.account_panel(ui, view, l, p),
+            Tab::Repositories => self.repository_panel(ui, view, l),
+            Tab::Pulls => self.pull_panel(ui, view, l),
+        });
+        if self.form.is_some() {
+            self.dialog(ui, view, l, p);
+        }
+        self.take_action()
+    }
+
+    pub(super) fn take_action(&mut self) -> Option<RepositoryAction> {
+        self.action.take()
+    }
+
+    pub(super) fn authorization_status(
+        &mut self,
+        ui: &mut Ui,
+        view: &View,
+        l: Language,
+        p: Palette,
+    ) {
         if let Some(message) = view.notice {
             ui.label(notice(message, l));
         }
@@ -179,42 +200,62 @@ impl GithubUi {
                 });
             });
         }
-        ui.add_enabled_ui(!view.busy, |ui| match self.tab {
-            Tab::Accounts => self.account_panel(ui, view, l),
-            Tab::Repositories => self.repository_panel(ui, view, l),
-            Tab::Pulls => self.pull_panel(ui, view, l),
-        });
-        if self.form.is_some() {
-            self.dialog(ui, view, l, p);
-        }
-        self.action.take()
     }
 
-    fn account_panel(&mut self, ui: &mut Ui, view: &View, l: Language) {
+    pub(super) fn sign_in_controls(&mut self, ui: &mut Ui, view: &View, l: Language, p: Palette) {
+        let configured = !view.client_id.is_empty();
+        let label = if view.accounts.is_empty() {
+            l.local("Sign in to GitHub.com", "Entrar no GitHub.com")
+        } else {
+            l.local("Add a GitHub account", "Adicionar conta do GitHub")
+        };
+        ui.add_enabled_ui(!view.busy, |ui| {
+            let mut start = false;
+            if !self.configure_client || configured {
+                if c::primary(ui, label, p).clicked() {
+                    if configured {
+                        start = true;
+                    } else {
+                        self.configure_client = true;
+                    }
+                }
+            } else {
+                ui.label(l.local(
+                    "This build needs the public Client ID of the gitRUST GitHub App.",
+                    "Esta versão precisa do Client ID público do GitHub App do gitRUST.",
+                ));
+                let field = ui.label(l.local("GitHub App Client ID", "Client ID do GitHub App"));
+                let input = ui.add(TextEdit::singleline(&mut self.client)
+                    .id_salt("github-client")
+                    .desired_width(310.0_f32.min(ui.available_width())))
+                    .labelled_by(field.id);
+                if !input.has_focus() && ui.memory(|memory| memory.focused().is_none()) {
+                    input.request_focus();
+                }
+                ui.horizontal_wrapped(|ui| {
+                    if ui.add_enabled_ui(!self.client.trim().is_empty(), |ui| c::primary(ui, label, p)).inner.clicked() {
+                        start = true;
+                    }
+                    if ui.link(l.local("GitHub App setup", "Configurar o GitHub App")).clicked() {
+                        self.send(Action::Open("https://github.com/enthonyaraujo/gitRUST/blob/main/docs/GITHUB_APP_SETUP.md".into()));
+                    }
+                });
+            }
+            if start {
+                self.send(Action::SignIn {
+                    client_id: if configured { view.client_id.clone() } else { self.client.trim().into() },
+                    reconnect: None,
+                });
+            }
+        });
+    }
+
+    fn account_panel(&mut self, ui: &mut Ui, view: &View, l: Language, p: Palette) {
         ScrollArea::vertical()
             .id_salt("github-accounts")
             .show(ui, |ui| {
-                ui.label(l.local("GitHub App Client ID", "Client ID do GitHub App"));
-                ui.add_enabled(
-                    view.client_id.is_empty(),
-                    TextEdit::singleline(&mut self.client)
-                        .id_salt("github-client")
-                        .desired_width(310.0),
-                )
-                .accessible_name(l.local("GitHub App Client ID", "Client ID do GitHub App"));
+                self.sign_in_controls(ui, view, l, p);
                 ui.horizontal_wrapped(|ui| {
-                    if ui
-                        .add_enabled(
-                            !self.client.is_empty(),
-                            Button::new(l.local("Sign in to GitHub", "Entrar no GitHub")),
-                        )
-                        .clicked()
-                    {
-                        self.send(Action::SignIn {
-                            client_id: self.client.trim().into(),
-                            reconnect: None,
-                        });
-                    }
                     if !view.client_id.is_empty()
                         && ui
                             .button(l.local("Load saved accounts", "Carregar contas salvas"))

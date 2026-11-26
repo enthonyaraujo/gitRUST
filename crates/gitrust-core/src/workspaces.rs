@@ -196,9 +196,12 @@ pub enum WorkspaceIssue {
 
 /// Data consumed by the repository workspace view.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[allow(clippy::struct_excessive_bools)] // Independent onboarding, storage, Git availability and watcher status.
 pub struct RepositoryView {
     /// GitHub account and repository views.
     pub github: crate::github::View,
+    /// A fresh local profile can start with optional GitHub onboarding.
+    pub offer_welcome: bool,
     /// Configured remote endpoints and transport status.
     pub remotes: Option<crate::remotes::RemotesView>,
     /// Branches, history and merge state for the active workspace.
@@ -245,6 +248,8 @@ pub enum DesktopTool {
 pub enum RepositoryAction {
     /// Dispatch an explicit GitHub action.
     Github(crate::github::Action),
+    /// Continue with local Git and remember the first-run choice.
+    DismissWelcome,
     /// Apply a reviewed remote operation.
     Remote(crate::remotes::RemoteIntent),
     /// Request a branch, history or merge operation.
@@ -296,6 +301,7 @@ impl std::fmt::Debug for RepositoryAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let action = match self {
             Self::Github(_) => "Github",
+            Self::DismissWelcome => "DismissWelcome",
             Self::Browse => "Browse",
             Self::Changes(_) => "Changes",
             Self::Navigate(_) => "Navigate",

@@ -1133,6 +1133,16 @@ impl Desktop {
             self.screen = super::Screen::Workspace;
         }
         if let Some(managed) = &mut self.managed {
+            if self.screen == super::Screen::Workspace
+                && view.offer_welcome
+                && managed.view.activity == Activity::Starting
+            {
+                self.screen = super::Screen::Welcome;
+            }
+            if self.screen == super::Screen::Welcome && view.github.active.is_some() {
+                managed.github.accounts();
+                self.screen = super::Screen::Github;
+            }
             if managed.view.navigation.as_ref().map(|nav| nav.identity)
                 != view.navigation.as_ref().map(|nav| nav.identity)
             {

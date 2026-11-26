@@ -5,6 +5,7 @@ mod github;
 mod navigation;
 mod remotes;
 mod repositories;
+mod welcome;
 
 use repositories::{FormKind, ManagerUi};
 
@@ -108,6 +109,7 @@ impl FrameEvents {
 enum Screen {
     #[default]
     Workspace,
+    Welcome,
     Demo,
     Gallery,
     Github,
@@ -341,36 +343,40 @@ impl Desktop {
             }
         }
         self.menu_bar(ui, p, l, &mut events);
-        if self.screen != Screen::Demo || rect.height() >= size::SHORT {
+        if self.screen != Screen::Welcome
+            && (self.screen != Screen::Demo || rect.height() >= size::SHORT)
+        {
             self.toolbar(ui, p, l);
         }
-        c::status_bar(ui, p, |ui| {
-            let status = if let Some(managed) = &self.managed {
-                if !managed.view.git_available
-                    && managed.view.activity == gitrust_core::workspaces::Activity::Idle
-                {
+        if self.screen != Screen::Welcome {
+            c::status_bar(ui, p, |ui| {
+                let status = if let Some(managed) = &self.managed {
+                    if !managed.view.git_available
+                        && managed.view.activity == gitrust_core::workspaces::Activity::Idle
+                    {
+                        l.text(Text::NoGit)
+                    } else if managed.view.active.is_some() {
+                        l.local("Local workspace", "Workspace local")
+                    } else {
+                        l.text(Text::NoRepositoryShort)
+                    }
+                } else if self.screen == Screen::Workspace {
                     l.text(Text::NoGit)
-                } else if managed.view.active.is_some() {
-                    l.local("Local workspace", "Workspace local")
                 } else {
-                    l.text(Text::NoRepositoryShort)
+                    l.text(Text::DemoHint)
+                };
+                c::status_indicator(ui, status, p.muted);
+                if !compact {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.label(
+                            RichText::new(l.text(Text::Telemetry))
+                                .small()
+                                .color(p.muted),
+                        );
+                    });
                 }
-            } else if self.screen == Screen::Workspace {
-                l.text(Text::NoGit)
-            } else {
-                l.text(Text::DemoHint)
-            };
-            c::status_indicator(ui, status, p.muted);
-            if !compact {
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(
-                        RichText::new(l.text(Text::Telemetry))
-                            .small()
-                            .color(p.muted),
-                    );
-                });
-            }
-        });
+            });
+        }
         self.workspace(ui, p, l, compact);
         self.dialogs(ui, state, p, l);
         if let Some(managed) = &mut self.managed {
@@ -614,6 +620,12 @@ impl Desktop {
     }
 
     fn workspace(&mut self, ui: &mut Ui, p: Palette, l: Language, compact: bool) {
+        if self.screen == Screen::Welcome {
+            CentralPanel::default()
+                .frame(c::panel(p.background, 0))
+                .show(ui, |ui| self.welcome(ui, l, p));
+            return;
+        }
         if self.screen == Screen::Gallery {
             CentralPanel::default()
                 .frame(c::panel(p.background, size::LG))
@@ -661,7 +673,7 @@ impl Desktop {
                 }
                 Screen::Demo if compact && !self.compact_detail => self.sidebar(ui, p, l, true),
                 Screen::Demo => self.details(ui, p, l, compact),
-                Screen::Gallery => {}
+                Screen::Gallery | Screen::Welcome => {}
             });
     }
 

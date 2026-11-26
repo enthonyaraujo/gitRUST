@@ -105,6 +105,29 @@ impl Store {
         }
     }
 
+    /// Report whether onboarding was previously completed.
+    ///
+    /// # Errors
+    /// Returns an error if the marker cannot be read.
+    pub fn welcome_completed(&self) -> Result<bool, StorageError> {
+        let Some(marker) = read(&self.preferences.with_file_name("welcome-v1"))? else {
+            return Ok(false);
+        };
+        if marker == b"1" {
+            Ok(true)
+        } else {
+            Err(StorageError::Invalid)
+        }
+    }
+
+    /// Record completion without changing appearance, recents or account settings.
+    ///
+    /// # Errors
+    /// Returns a filesystem error if the marker cannot be saved.
+    pub fn complete_welcome(&self) -> Result<(), StorageError> {
+        replace_file(&self.preferences.with_file_name("welcome-v1"), b"1")
+    }
+
     /// Save a sanitized runtime log in the local application data folder.
     /// # Errors
     /// Returns a storage error if the log cannot be saved.

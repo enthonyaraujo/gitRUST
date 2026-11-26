@@ -212,6 +212,7 @@ impl Coordinator {
         let preferences = service.load_profile();
         service.discover_git();
         service.initialize_github();
+        service.initialize_welcome();
         service.publish(Some(preferences), None);
         loop {
             let ready = service.pending.is_none() && service.candidate.is_none();
@@ -369,11 +370,17 @@ impl Coordinator {
             )
         ) && !matches!(
             action,
-            RepositoryAction::Cancel | RepositoryAction::SavePreferences(_)
+            RepositoryAction::Cancel
+                | RepositoryAction::SavePreferences(_)
+                | RepositoryAction::DismissWelcome
         ) {
             return;
         }
         match action {
+            RepositoryAction::DismissWelcome => {
+                self.cancel_github();
+                self.complete_welcome();
+            }
             RepositoryAction::Github(action) => self.github_action(action),
             RepositoryAction::Changes(intent) => self.on_changes(intent),
             RepositoryAction::Remote(intent) => self.on_remote(intent),
@@ -1039,6 +1046,28 @@ mod integration_tests {
                 .as_ref()
                 .is_some_and(|current| current.path == candidate)
         })
+    }
+
+    #[test]
+    fn skipping_optional_welcome_survives_restart_without_opening_github() {
+        let fixture = tempfile::tempdir().expect("isolated profile");
+        let make_service = || {
+            let path = fixture.path().to_owned();
+            Workspaces::start_with(&egui::Context::default(), move || {
+                Some(Store::at(&path, &path))
+            })
+        };
+        let service = make_service();
+        let is_ready = |view: &RepositoryView| view.activity == Activity::Idle;
+        let initial = until(&service, is_ready);
+        assert!(initial.offer_welcome && !initial.github.busy && initial.github.active.is_none());
+        service.send(RepositoryAction::DismissWelcome);
+        let skipped = until(&service, |view| !view.offer_welcome);
+        assert!(!skipped.github.busy && skipped.github.active.is_none());
+        drop(service);
+        let restart = make_service();
+        let view = until(&restart, is_ready);
+        assert!(!view.offer_welcome && !view.github.busy && view.github.active.is_none());
     }
 
     #[test]
