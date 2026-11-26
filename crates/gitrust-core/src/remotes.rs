@@ -9,6 +9,11 @@ pub enum Credential {
     Anonymous,
     MemoryCache,
     SecretService,
+    LinkedAccount,
+    ScopedToken {
+        endpoint: String,
+        secret: String,
+    },
     Password {
         user: String,
         secret: String,
@@ -125,6 +130,18 @@ pub enum RemoteAction {
         remote: String,
         branch: String,
         track: bool,
+        auth: Auth,
+    },
+    Publish {
+        remote: String,
+        url: String,
+        branch: String,
+        auth: Auth,
+    },
+    CheckoutReview {
+        endpoint: String,
+        revision: String,
+        branch: String,
         auth: Auth,
     },
     ContinueRebase,

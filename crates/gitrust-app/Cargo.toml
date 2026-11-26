@@ -21,12 +21,13 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 gitrust-git.workspace = true
 gitrust-storage.workspace = true
+gitrust-providers.workspace = true
 rfd = "0.18.0"
 notify = "9.0.0"
 crossbeam-channel = "0.5.15"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
 
 [dev-dependencies]
-gitrust-providers.workspace = true
 tempfile = "3.27.0"
 
 [lints]

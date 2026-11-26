@@ -70,3 +70,7 @@ The Branch selector keeps native path and reference identity separate from displ
 ## Stage 06 remote operations
 
 The native Remote selector displays the selected endpoint and the upstream, with divergence labeled as local tracking data. Modal forms review endpoint, destination branch and strategy before a request is submitted. HTTPS secrets use a masked text field and move out of the form at submission. In-flight progress and cancellation use workspace events. Merge and rebase conflicts return to the existing Changes workspace. Remote labels have English and Brazilian Portuguese variants and use the existing egui accessibility bridge. [Remote operations](REMOTE_OPERATIONS.md)
+
+## Stage 07 GitHub workspace
+
+Accounts, repositories and pull requests use egui controls and provider snapshots without credential material. Explicit user actions start provider work. Native browser and file-picker actions are separate from the rendering loop. [GitHub integration](GITHUB_INTEGRATION.md)

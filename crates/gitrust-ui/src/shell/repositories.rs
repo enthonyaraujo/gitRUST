@@ -111,6 +111,7 @@ pub(super) struct ManagerUi {
     changes: super::changes::ChangesUi,
     pub(super) navigation: super::navigation::NavigationUi,
     pub(super) remotes: super::remotes::RemoteUi,
+    pub(super) github: super::github::GithubUi,
     form: Option<Form>,
     action: Option<RepositoryAction>,
 }
@@ -303,7 +304,15 @@ impl ManagerUi {
             && let Some(action) = self
                 .remotes
                 .status(ui, view, self.view.progress, l, p)
-                .or_else(|| self.remotes.dialog(ui, view, l, p))
+                .or_else(|| {
+                    self.remotes.dialog(
+                        ui,
+                        view,
+                        self.view.github.workspace_account.is_some(),
+                        l,
+                        p,
+                    )
+                })
         {
             self.action = Some(action);
         }
@@ -667,7 +676,8 @@ impl ManagerUi {
             }
         }
         if form.kind == FormKind::Clone {
-            form.auth.show(ui, super::remotes::ssh_url(&form.url), l);
+            form.auth
+                .show(ui, super::remotes::ssh_url(&form.url), false, l);
         }
         ui.add_space(8.0);
         ui.horizontal_wrapped(|ui| {
@@ -740,6 +750,9 @@ impl Desktop {
 
     /// Replace the repository presentation snapshot.
     pub fn set_repository_view(&mut self, view: RepositoryView) {
+        if self.screen == super::Screen::Github && view.activity == Activity::Cloning {
+            self.screen = super::Screen::Workspace;
+        }
         if let Some(managed) = &mut self.managed {
             if managed.view.navigation.as_ref().map(|nav| nav.identity)
                 != view.navigation.as_ref().map(|nav| nav.identity)
@@ -752,6 +765,11 @@ impl Desktop {
 
     /// Fill the destination from the native picker without losing path bytes.
     pub fn set_repository_destination(&mut self, path: PathBuf) {
+        if let Some(managed) = &mut self.managed
+            && managed.github.destination(&path)
+        {
+            return;
+        }
         if let Some(form) = self
             .managed
             .as_mut()

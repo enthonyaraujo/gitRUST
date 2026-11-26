@@ -150,7 +150,7 @@ All **High**, **Medium**, and **Low** defects confirmed within Stage 00 scope we
   - `X11 + NVIDIA Vulkan (WGPU_POWER_PREF=high)`: **`0.000%`** CPU (`6.00 s`, `0` ticks).
   - `X11 (XWayland) + Intel Vulkan`: **`5.4833%`** CPU (`60.00 s`, `329` ticks).
 - **Cause:** Upstream Mesa Intel ANV Vulkan WSI on GNOME XWayland returning `Suboptimal`/`Outdated` swapchain status (`egui-wgpu-0.37.0/src/winit.rs:608-617`), not an application-level repaint loop.
-- **Mitigation / Recommendation:** Keep native Wayland as default on Wayland sessions (`0.0000%` CPU), document `WGPU_BACKEND=gl` as a verified user workaround for affected XWayland/Intel Mesa setups in `docs/PERFORMANCE.md`, and re-test against future Mesa/`wgpu` releases in Stage 09.
+- **Mitigation / Recommendation:** Keep native Wayland as default on Wayland sessions (`0.0000%` CPU), document `WGPU_BACKEND=gl` as a verified user workaround for affected XWayland/Intel Mesa setups in `docs/PERFORMANCE.md`, and re-test against future Mesa/`wgpu` releases in Stage 11.
 - **Final Status:** `Documented (Upstream Environment Limitation)`
 
 ---
@@ -173,8 +173,8 @@ All **High**, **Medium**, and **Low** defects confirmed within Stage 00 scope we
 | Non-sensitive diagnostic logs (no env/secret dumps) | **Implemented** | `crates/gitrust-app/src/main.rs` logs only version, OS, protocol, and GPU adapter. |
 | Telemetry disabled by default | **Implemented** | No network crates compiled; `telemetry_enabled = false`. |
 | GitHub Actions minimal permissions & SHA pinning | **Implemented in Workflow (Pending Remote Run)** | `.github/workflows/ci.yml` (`contents: read`, `persist-credentials: false`, 40-char SHAs). |
-| Untrusted repository `.git/config`, hook, filter, and helper defenses | **Documented Only (Target: Stage 02 / Stage 09)** | `docs/SECURITY_ARCHITECTURE.md`; no `git` subprocess execution exists yet. |
-| OS Keychain credential storage & strict TLS HTTP client | **Declarative Policy Constants Only (Target: Stage 03 / Stage 08)** | `gitrust-storage` & `gitrust-providers` define policy types; no disk/network I/O exists yet. |
+| Untrusted repository `.git/config`, hook, filter, and helper defenses | **Documented Only (Target: Stage 02 / Stage 11)** | `docs/SECURITY_ARCHITECTURE.md`; no `git` subprocess execution exists yet. |
+| OS Keychain credential storage & strict TLS HTTP client | **Declarative Policy Constants Only (Target: Stage 07 / Stage 08)** | `gitrust-storage` & `gitrust-providers` define policy types; no disk/network I/O exists yet. |
 | Automated CVE / RustSec advisory verification (`cargo-audit` / `cargo-deny`) | **Configured in CI; Not Executed Locally** | `deny.toml` + `ci.yml`; binaries absent locally without installation authorization. |
 
 ---

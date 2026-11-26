@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       include_deferred_platforms:
-        description: Include Windows and macOS checks reserved for Stage 07
+        description: Include Windows and macOS checks reserved for Stage 08
         type: boolean
         default: false
 
@@ -124,7 +124,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Stages 04–06 run Linux automatically. Stage 07 can restore the full matrix.
+        # Stages 04–07 run Linux automatically. Stage 08 can restore the full matrix.
         os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.include_deferred_platforms && '["ubuntu-latest","windows-latest","macos-latest"]' || '["ubuntu-latest"]') }}
     steps:
       - name: Checkout repository

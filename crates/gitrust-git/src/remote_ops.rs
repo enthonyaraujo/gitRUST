@@ -254,6 +254,18 @@ impl Runner<'_> {
                 track,
                 auth,
             } => self.push(repo, width, request, remote, branch, *track, auth)?,
+            RemoteAction::Publish {
+                remote,
+                url,
+                branch,
+                auth,
+            } => self.publish_existing(repo, width, request, remote, url, branch, auth)?,
+            RemoteAction::CheckoutReview {
+                endpoint,
+                revision,
+                branch,
+                auth,
+            } => self.checkout_review(repo, width, request, endpoint, revision, branch, auth)?,
             RemoteAction::ContinueRebase | RemoteAction::AbortRebase => {
                 self.recover_rebase(repo, width, request)?
             }
@@ -271,6 +283,118 @@ impl Runner<'_> {
             }
         };
         Ok(TaskValue::RemoteResult(result))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn publish_existing(
+        &self,
+        repo: &TrustedRepository,
+        width: usize,
+        request: &RemoteRequest,
+        name: &str,
+        url: &str,
+        branch: &str,
+        auth: &Auth,
+    ) -> Result<RemoteResult, GitError> {
+        remote_name(name)?;
+        branch_name(branch)?;
+        if request.expected.current.as_deref() != Some(branch)
+            || request
+                .status
+                .as_ref()
+                .and_then(|status| status.branch.oid.as_ref())
+                .is_none()
+            || navigation::incompatible(repo)?
+            || navigation::merge_source(repo, width)?.is_some()
+        {
+            return Err(GitError::StaleSnapshot);
+        }
+        RemoteEndpoint::new(url)?;
+        if let Some(found) = request
+            .expected
+            .entries
+            .iter()
+            .find(|remote| remote.name == name)
+        {
+            if found.fetch.as_deref() != Some(url) || found.push.as_deref() != Some(url) {
+                return Err(GitError::DestinationExists);
+            }
+        } else {
+            self.edit_remote(
+                repo,
+                &request.expected,
+                &RemoteAction::Add(name.into(), url.into(), None),
+            )?;
+        }
+        let mut updated = request.clone();
+        updated.expected = self.remotes(repo, width)?;
+        if selected(&updated.expected, name)?.push.as_deref() != Some(url) {
+            return Err(GitError::StaleSnapshot);
+        }
+        self.push(repo, width, &updated, name, branch, true, auth)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn checkout_review(
+        &self,
+        repo: &TrustedRepository,
+        width: usize,
+        request: &RemoteRequest,
+        url: &str,
+        revision: &str,
+        branch: &str,
+        auth: &Auth,
+    ) -> Result<RemoteResult, GitError> {
+        branch_name(branch)?;
+        let expected = request.status.as_ref().ok_or(GitError::StaleSnapshot)?;
+        if !expected.entries.is_empty()
+            || navigation::incompatible(repo)?
+            || navigation::merge_source(repo, width)?.is_some()
+        {
+            return Err(GitError::MergeDirty);
+        }
+        let revision = super::object(revision.as_bytes(), width)?;
+        let endpoint = RemoteEndpoint::new(url)?;
+        let cwd = repo
+            .repository()
+            .worktree()
+            .ok_or(GitError::InvalidReference)?;
+        let command = GitCommandSpec::new(Builtin::Fetch).args([
+            "--no-write-fetch-head",
+            "--no-tags",
+            "--no-prune",
+            "--no-auto-maintenance",
+            "--no-recurse-submodules",
+            "--refmap=",
+            "--progress",
+            "--",
+            endpoint.as_str(),
+            revision.as_str(),
+        ]);
+        self.transfer(cwd, command, &endpoint, auth, request, false)?;
+        self.prepare(repo)?;
+        if self.fresh_status(repo, width, false)? != **expected
+            || navigation::incompatible(repo)?
+            || navigation::merge_source(repo, width)?.is_some()
+        {
+            return Err(GitError::StaleSnapshot);
+        }
+        self.require_commit(cwd, &revision, width)?;
+        repo.validate_worktrees(self.control)?;
+        repo.validate_reflogs(self.control)?;
+        self.checked_local(
+            cwd,
+            GitCommandSpec::new(Builtin::Switch).args([
+                "--no-overwrite-ignore",
+                "--no-guess",
+                "-c",
+                branch,
+                "--",
+                revision.as_str(),
+            ]),
+        )
+        .map_err(sanitized)?;
+        Ok(RemoteResult::new(RemoteNotice::Updated))
     }
 
     fn edit_remote(
@@ -527,7 +651,11 @@ impl Runner<'_> {
     ) -> Result<RemoteResult, GitError> {
         if names.is_empty()
             || names.len() > 64
-            || (names.len() > 1 && matches!(auth.credential, Credential::Password { .. }))
+            || (names.len() > 1
+                && matches!(
+                    auth.credential,
+                    Credential::Password { .. } | Credential::ScopedToken { .. }
+                ))
         {
             return Err(GitError::InvalidArgument("remote selection"));
         }

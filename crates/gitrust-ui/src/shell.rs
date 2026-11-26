@@ -1,5 +1,6 @@
 mod changes;
 mod dialogs;
+mod github;
 mod navigation;
 mod remotes;
 mod repositories;
@@ -101,6 +102,7 @@ enum Screen {
     Workspace,
     Demo,
     Gallery,
+    Github,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -462,6 +464,10 @@ impl Desktop {
                 }
             }
             Text::View => {
+                if self.managed.is_some() && ui.button("GitHub").clicked() {
+                    self.screen = Screen::Github;
+                    ui.close();
+                }
                 if ui.button(l.text(Text::Workspace)).clicked() {
                     self.screen = Screen::Workspace;
                     ui.close();
@@ -516,6 +522,16 @@ impl Desktop {
             .as_mut()
             .filter(|managed| managed.view.active.is_some())
         {
+            if let Some(repository) = &managed.view.github.workspace_repo
+                && ui
+                    .button(l.local("Open repository on GitHub", "Abrir repositório no GitHub"))
+                    .clicked()
+            {
+                managed.send(gitrust_core::workspaces::RepositoryAction::Github(
+                    gitrust_core::github::Action::Open(repository.browser()),
+                ));
+                ui.close();
+            }
             managed.remote_popup(ui, l, p);
         } else {
             for action in [Text::Fetch, Text::Pull, Text::Push] {
@@ -667,7 +683,13 @@ impl Desktop {
                 if c::icon_button(ui, Icon::Settings, l.text(Text::Settings), p).clicked() {
                     self.dialog = Dialog::Settings;
                 }
-                if self.screen != Screen::Workspace && !compact && ui.available_width() > 114.0 {
+                if self.managed.is_some() && !compact && ui.button("GitHub").clicked() {
+                    self.screen = Screen::Github;
+                }
+                if matches!(self.screen, Screen::Demo | Screen::Gallery)
+                    && !compact
+                    && ui.available_width() > 114.0
+                {
                     c::badge(ui, l.text(Text::Demo), p.accent, p.selected);
                 }
             });
@@ -699,6 +721,13 @@ impl Desktop {
                         managed.workspace(ui, p, l);
                     } else {
                         self.empty_workspace(ui, p, l);
+                    }
+                }
+                Screen::Github => {
+                    if let Some(managed) = &mut self.managed
+                        && let Some(action) = managed.github.show(ui, &managed.view.github, l, p)
+                    {
+                        managed.send(action);
                     }
                 }
                 Screen::Demo if compact && !self.compact_detail => self.sidebar(ui, p, l, true),

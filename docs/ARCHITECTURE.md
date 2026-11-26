@@ -23,7 +23,7 @@ flowchart TD
     ui["gitrust-ui (egui views & theme)"]
     git["gitrust-git (Git inspection & provisioning)"]
     storage["gitrust-storage (local profile)"]
-    providers["gitrust-providers (GitHub/GitLab boundary — Stage 09)"]
+    providers["gitrust-providers (GitHub API — Stage 07)"]
     core["gitrust-core (pure state, models & events)"]
 
     app --> ui
@@ -46,14 +46,14 @@ flowchart TD
 | `gitrust-app` | **Stage 04 implementation** | Native entrypoint, workspace coordinator, dialogs, watcher lifecycle and reconciliation of changes and commits. | `gitrust-core`, `gitrust-git`, `gitrust-storage`, `gitrust-ui`, `eframe`, `egui`, `rfd`, `notify`, `crossbeam-channel`, `tracing`, `tracing-subscriber` |
 | `gitrust-git` | **Stage 06 implementation** | Typed repository discovery, inspection, provisioning, local writes and explicit remote operations. Owns scheduling, subprocess policy and byte-oriented parsing. | `gitrust-core`, `process-wrap`, `tempfile`, `url`, `rustix` (Linux/macOS) |
 | `gitrust-storage` | **Stage 03 implementation** | Versioned preferences and workspace catalog, with native local paths and atomic file replacement. | `gitrust-core`, `directories`, `tempfile` |
-| `gitrust-providers` | **Boundary Only (Planned Stage 09)** | Strict TLS policy contract. GitHub, GitLab, and hosting API clients scheduled for **Stage 09**. | None (`std` only) |
+| `gitrust-providers` | **Stage 07 implementation** | GitHub.com Device Flow and REST under a strict HTTPS policy. Stage 10 covers additional providers. | `gitrust-core`, `ureq`, `rustls-native-certs`, `serde`, `serde_json` |
 
 ### Documented Adjustments to the Reference Directory Layout
 
 Per Stage 00 engineering guidelines, two intentional refinements were made relative to the reference directory skeleton:
 
 1. **Workspace Integration Tests (`crates/gitrust-app/tests/` instead of root `tests/`):** Because the root `Cargo.toml` is a **virtual Cargo manifest** (`[workspace]` without a root `[package]`), Cargo only discovers and executes integration tests placed inside member crates (`crates/*/tests/`). Placing `workspace_integration.rs` inside `crates/gitrust-app/tests/` ensures `cargo test --workspace` compiles and executes cross-crate and binary CLI integration tests automatically.
-2. **Asset and Benchmark Directories (`assets/` and `benches/`).** Empty directories with placeholder files were omitted in Stage 00. Stage 01 introduces licensed typography in `crates/gitrust-ui/assets` and first-party painted icons. Stage 02 adds an opt-in benchmark harness in `crates/gitrust-git/benches`. Stage 10 can expand measurements based on workloads observed in practice.
+2. **Asset and Benchmark Directories (`assets/` and `benches/`).** Empty directories with placeholder files were omitted in Stage 00. Stage 01 introduces licensed typography in `crates/gitrust-ui/assets` and first-party painted icons. Stage 02 adds an opt-in benchmark harness in `crates/gitrust-git/benches`. Stage 11 can expand measurements based on workloads observed in practice.
 3. **Supply-Chain Policy (`deny.toml`):** Added at the workspace root to enforce MIT-compatible dependency licensing and vulnerability checks in CI.
 
 ---
@@ -97,3 +97,7 @@ The app coordinator builds bounded graph rows from paged Git objects. The shared
 ## Stage 06 remote operations
 
 Core defines the authentication choices, remote intents and sanitized outcomes. UI builds confirmations from workspace snapshots. App submits typed requests, publishes bounded progress, and refreshes the workspace after completion. Git owns transport policy, config and ref changes, and local pull integration. Storage retains the existing preferences and workspace history. Provider integrations remain reserved for a later stage. [ADR-0011](adr/0011-remote-operations.md)
+
+## Stage 07 GitHub integration
+
+The provider owns GitHub wire formats and HTTPS policy. The storage crate holds Linux Secret Service and public workspace associations. A bounded application worker handles provider jobs, and the coordinator submits reviewed Git effects through the existing Git Engine. [ADR-0012](adr/0012-github-integration.md)

@@ -205,6 +205,8 @@ impl Coordinator {
             let (navigation, remotes) = *summary;
             self.update_summary(navigation);
             self.update_remotes(remotes);
+            self.sync_github_workspace();
+            self.finish_github_clone();
             return;
         }
         let Some(view) = &mut self.view.navigation else {

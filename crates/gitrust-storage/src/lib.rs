@@ -1,7 +1,9 @@
 //! Local preferences, workspace history and credential-handling policy for gitRUST.
 
+mod credentials;
 mod persistence;
-pub use persistence::{StorageError, Store};
+pub use credentials::{CredentialError, CredentialVault};
+pub use persistence::{GithubBindings, StorageError, Store};
 
 use gitrust_core::CrateStageStatus;
 

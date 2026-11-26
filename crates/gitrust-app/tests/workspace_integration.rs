@@ -8,7 +8,7 @@ use gitrust_providers::TlsVerificationPolicy;
 use gitrust_storage::StorageSecurityBaseline;
 
 #[test]
-fn workspace_crates_preserve_stage_00_honesty_and_security_baselines() {
+fn workspace_crates_report_readiness_and_preserve_security_baselines() {
     let meta = AppMetadata::new(env!("CARGO_PKG_VERSION"));
     assert_eq!(meta.name, APP_NAME);
     assert_eq!(meta.package_name, PACKAGE_NAME);
@@ -24,7 +24,7 @@ fn workspace_crates_preserve_stage_00_honesty_and_security_baselines() {
     );
     assert_eq!(
         gitrust_providers::STAGE_STATUS,
-        CrateStageStatus::Planned { target_stage: 8 }
+        CrateStageStatus::Active { stage: 7 }
     );
 
     let storage_policy = StorageSecurityBaseline::strict();

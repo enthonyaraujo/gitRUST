@@ -698,3 +698,76 @@ fn push_keeps_signed_object_bytes_and_rebase_refuses_to_replace_them() {
     );
     assert!(String::from_utf8_lossy(&output.stdout).contains("BEGIN SSH SIGNATURE"));
 }
+
+#[test]
+fn publication_can_resume_after_git_rejection_without_overwriting_remotes() {
+    let (fixture, engine, repo) = setup();
+    let Some(server) = Server::start() else {
+        return;
+    };
+    let publish = |endpoint| RemoteAction::Publish {
+        remote: "published".into(),
+        url: endpoint,
+        branch: "main".into(),
+        auth: server.auth(),
+    };
+    let endpoint = server.url("protected");
+    assert_eq!(
+        run(&engine, &repo, publish(endpoint.clone())),
+        RemoteNotice::Rejected
+    );
+    let after = snapshot(&engine, &repo);
+    assert_eq!(after.entries.len(), 1);
+    assert_eq!(after.entries[0].fetch.as_ref(), Some(&endpoint));
+    assert!(after.upstream.is_none());
+    let mismatch = request(&engine, &repo, publish(server.url("public")));
+    assert!(matches!(
+        execute(&engine, &repo, mismatch),
+        Err(GitError::DestinationExists)
+    ));
+    fs::write(server.directory.path().join("allow-protected"), b"yes").expect("allow fixture push");
+    assert_eq!(run(&engine, &repo, publish(endpoint)), RemoteNotice::Pushed);
+    let after = snapshot(&engine, &repo);
+    assert_eq!(after.entries.len(), 1);
+    assert_eq!(after.upstream, Some(("published".into(), "main".into())));
+    let contents = fixture_command(&server.directory.path().join("protected.git"))
+        .args(["rev-parse", "refs/heads/main"])
+        .output()
+        .expect("read server branch");
+    assert!(contents.status.success());
+    assert_eq!(contents.stdout, fixture.git(["rev-parse", "HEAD"]).stdout);
+}
+
+#[test]
+fn reviewed_checkout_pins_the_commit_and_preserves_local_work() {
+    let (fixture, engine, repo) = setup();
+    let Some(server) = Server::start() else {
+        return;
+    };
+    let (_local, reviewed) = diverge(&fixture, &server, false);
+    let checkout = || RemoteAction::CheckoutReview {
+        endpoint: server.url("public"),
+        revision: reviewed.as_str().into(),
+        branch: "review/pr-1".into(),
+        auth: server.auth(),
+    };
+    fixture.write("untracked", "keep");
+    let dirty = request(&engine, &repo, checkout());
+    assert!(matches!(
+        execute(&engine, &repo, dirty),
+        Err(GitError::MergeDirty)
+    ));
+    assert_eq!(
+        fs::read(fixture.path().join("untracked")).expect("kept"),
+        b"keep"
+    );
+    assert_eq!(server.requests(), "");
+    fs::remove_file(fixture.path().join("untracked")).expect("remove disposable file");
+    assert_eq!(run(&engine, &repo, checkout()), RemoteNotice::Updated);
+    assert_eq!(fixture.oid("HEAD"), reviewed);
+    assert_eq!(
+        fixture.git(["branch", "--show-current"]).stdout,
+        b"review/pr-1\n"
+    );
+    assert!(fixture.path().join("remote").is_file());
+}

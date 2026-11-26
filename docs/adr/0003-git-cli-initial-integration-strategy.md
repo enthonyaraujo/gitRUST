@@ -38,7 +38,7 @@ A desktop Git client must never corrupt user repositories and must respect real-
    - Sanitized environment (`GIT_TERMINAL_PROMPT=0`, safe `-c` overrides on untrusted read paths) and `--` / `--end-of-options` argument separation.
    - Asynchronous background execution with cancellation support and a per-repository write queue/mutex for mutating operations.
    - Explicit confirmation gates for `DestructiveWrite` operations.
-3. Define `gitrust-git` interfaces in domain terms (status snapshots, diff models, commit records) rather than leaking raw CLI flags into `gitrust-core` or `gitrust-ui`, enabling evidence-based `gitoxide` evaluation in **Stage 10**.
+3. Define `gitrust-git` interfaces in domain terms (status snapshots, diff models, commit records) rather than leaking raw CLI flags into `gitrust-core` or `gitrust-ui`, enabling evidence-based `gitoxide` evaluation in **Stage 11**.
 
 ## Consequences
 

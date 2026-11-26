@@ -35,6 +35,6 @@ Linux supports the fixed system executables `/usr/bin/gpg` and `/usr/bin/ssh-key
 | OpenPGP | The full hexadecimal fingerprint of a key in the user's GPG keyring. The signing process can use an absolute `GNUPGHOME` provided at launch. |
 | SSH | An absolute path to a local key usable by the system signer. Automatic SSH agent discovery is outside this stage. |
 
-The application never reads private key material into its own state and never saves signer selections to the repository profile. An unavailable signer or unusable key yields an error. Amending a signed commit requires a new signature. Windows/macOS signing, protected key prompt behavior across desktop sessions, and native UI compatibility remain Stage 07 work.
+The application never reads private key material into its own state and never saves signer selections to the repository profile. An unavailable signer or unusable key yields an error. Amending a signed commit requires a new signature. Windows/macOS signing, protected key prompt behavior across desktop sessions, and native UI compatibility remain Stage 08 work.
 
 See [ADR 0009](adr/0009-local-changes-and-commits.md) and [Git Engine](GIT_ENGINE.md#stage-04-mutations) for the execution contract.

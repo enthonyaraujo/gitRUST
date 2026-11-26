@@ -186,7 +186,7 @@ impl Network {
         if ssh {
             network.ssh(endpoint, auth, bridge)?;
         } else {
-            network.https(auth)?;
+            network.https(endpoint, auth)?;
         }
         Ok(network)
     }
@@ -196,7 +196,7 @@ impl Network {
         self.options.push(option.into());
     }
 
-    fn https(&mut self, auth: &Auth) -> Result<(), GitError> {
+    fn https(&mut self, endpoint: &RemoteEndpoint, auth: &Auth) -> Result<(), GitError> {
         if let Some(ca) = &auth.ca {
             self.env
                 .push(("GIT_SSL_CAINFO", regular(ca)?.into_os_string()));
@@ -223,23 +223,38 @@ impl Network {
                     self.env.push(("DBUS_SESSION_BUS_ADDRESS", bus));
                 }
             }
-            Credential::Password { user, secret } => {
-                if user.is_empty()
-                    || user.contains(':')
-                    || secret.is_empty()
-                    || user.len() + secret.len() > 8192
-                    || user.chars().chain(secret.chars()).any(char::is_control)
-                {
-                    return Err(GitError::InvalidArgument("HTTPS credentials"));
-                }
-                // Git receives only the variable name in argv. Redirects remain disabled.
-                let value = format!("{user}:{secret}");
-                let header = format!("Authorization: Basic {}", base64(value.as_bytes()));
-                self.env.push(("GITRUST_HTTP_AUTH", header.into()));
-                self.options
-                    .push("--config-env=http.extraHeader=GITRUST_HTTP_AUTH".into());
+            Credential::LinkedAccount => {
+                return Err(GitError::Remote(RemoteNotice::Authentication));
             }
+            Credential::ScopedToken {
+                endpoint: approved,
+                secret,
+            } => {
+                if auth.ca.is_some() || approved != endpoint.as_str() {
+                    return Err(GitError::Remote(RemoteNotice::Authentication));
+                }
+                self.basic_auth("x-access-token", secret)?;
+            }
+            Credential::Password { user, secret } => self.basic_auth(user, secret)?,
         }
+        Ok(())
+    }
+
+    fn basic_auth(&mut self, user: &str, secret: &str) -> Result<(), GitError> {
+        if user.is_empty()
+            || user.contains(':')
+            || secret.is_empty()
+            || user.len() + secret.len() > 8192
+            || user.chars().chain(secret.chars()).any(char::is_control)
+        {
+            return Err(GitError::InvalidArgument("HTTPS credentials"));
+        }
+        // Git receives only the variable name in argv. Redirects remain disabled.
+        let value = format!("{user}:{secret}");
+        let header = format!("Authorization: Basic {}", base64(value.as_bytes()));
+        self.env.push(("GITRUST_HTTP_AUTH", header.into()));
+        self.options
+            .push("--config-env=http.extraHeader=GITRUST_HTTP_AUTH".into());
         Ok(())
     }
 
@@ -467,5 +482,46 @@ pub(crate) fn network_notice(bytes: &[u8], writing: bool) -> RemoteNotice {
         RemoteNotice::Uncertain
     } else {
         RemoteNotice::Failed
+    }
+}
+
+#[cfg(test)]
+mod scoped_token_tests {
+    use super::*;
+
+    #[test]
+    fn provider_header_is_scoped_and_its_value_never_enters_arguments() {
+        let url = "https://github.com/example/test.git";
+        let endpoint = RemoteEndpoint::new(url).expect("authorized HTTPS");
+        let auth = Auth {
+            credential: Credential::ScopedToken {
+                endpoint: url.into(),
+                secret: "fixture-only".into(),
+            },
+            ..Auth::default()
+        };
+        let prepared = Network::prepare(&endpoint, &auth, None).expect("approved endpoint");
+        assert!(
+            prepared
+                .options
+                .iter()
+                .any(|value| value == "--config-env=http.extraHeader=GITRUST_HTTP_AUTH")
+        );
+        assert!(
+            prepared
+                .options
+                .iter()
+                .all(|value| !value.to_string_lossy().contains("fixture-only"))
+        );
+        for different in [
+            "https://example.invalid/test.git",
+            "https://github.com/example/other.git",
+        ] {
+            let different = RemoteEndpoint::new(different).expect("valid HTTPS");
+            assert!(matches!(
+                Network::prepare(&different, &auth, None),
+                Err(GitError::Remote(RemoteNotice::Authentication))
+            ));
+        }
     }
 }
