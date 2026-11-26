@@ -28,6 +28,7 @@ struct Form {
     suggested: String,
     branch: String,
     url: String,
+    auth: super::remotes::AuthFields,
 }
 
 impl std::fmt::Debug for Form {
@@ -48,6 +49,7 @@ impl Form {
             suggested: String::new(),
             branch: "main".to_owned(),
             url: String::new(),
+            auth: super::remotes::AuthFields::default(),
         }
     }
 
@@ -90,10 +92,7 @@ impl Form {
             return;
         }
         let url = self.url.trim_end_matches('/');
-        let name = url
-            .strip_prefix("https://")
-            .and_then(|value| value.rsplit_once('/'))
-            .map_or("", |(_, name)| name);
+        let name = url.rsplit(['/', ':']).next().unwrap_or("");
         let name = name.strip_suffix(".git").unwrap_or(name);
         if name
             .bytes()
@@ -111,6 +110,7 @@ pub(super) struct ManagerUi {
     query: String,
     changes: super::changes::ChangesUi,
     pub(super) navigation: super::navigation::NavigationUi,
+    pub(super) remotes: super::remotes::RemoteUi,
     form: Option<Form>,
     action: Option<RepositoryAction>,
 }
@@ -126,6 +126,7 @@ impl ManagerUi {
 
     pub(super) fn usable(&self) -> bool {
         self.view.git_available
+            && self.view.remotes.as_ref().is_none_or(|view| !view.busy)
             && matches!(self.view.activity, Activity::Idle | Activity::Inspecting)
             && self
                 .view
@@ -179,7 +180,9 @@ impl ManagerUi {
                         ),
                     );
                 }
-                self.activity(ui, l);
+                if Self::activity(ui, &self.view, l) {
+                    self.send(RepositoryAction::Cancel);
+                }
                 if let Some(workspace) = self.view.active.clone() {
                     if self.view.activity != Activity::Idle {
                         ui.separator();
@@ -221,6 +224,15 @@ impl ManagerUi {
                     }
                 }
             });
+    }
+
+    pub(super) fn remote_popup(&mut self, ui: &mut Ui, l: Language, p: Palette) {
+        if let Some(view) = &self.view.remotes {
+            self.remotes
+                .popup(ui, view, self.view.changes.is_some(), l, p);
+        } else {
+            ui.label(l.local("Loading remotes…", "Carregando remotes…"));
+        }
     }
 
     pub(super) fn branch_popup(&mut self, ui: &mut Ui, l: Language, p: Palette) {
@@ -275,11 +287,25 @@ impl ManagerUi {
                 ui.colored_label(if success { p.success } else { p.warning }, message);
             }
         });
+        if self.navigation.tab != Tab::Overview
+            && self.view.destination.is_some()
+            && Self::activity(ui, &self.view, l)
+        {
+            self.action = Some(RepositoryAction::Cancel);
+        }
         if let Some(view) = navigation {
             self.navigation.status(ui, view, l, p);
             if let Some(action) = self.navigation.dialog(ui, view, &workspace.checkout, l, p) {
                 self.action = Some(RepositoryAction::Navigate(action));
             }
+        }
+        if let Some(view) = &self.view.remotes
+            && let Some(action) = self
+                .remotes
+                .status(ui, view, self.view.progress, l, p)
+                .or_else(|| self.remotes.dialog(ui, view, l, p))
+        {
+            self.action = Some(action);
         }
         match self.navigation.tab {
             Tab::Overview => return false,
@@ -300,7 +326,8 @@ impl ManagerUi {
                         workspace,
                         changes,
                         self.view.activity == Activity::Idle
-                            && navigation.is_none_or(|view| !view.busy),
+                            && navigation.is_none_or(|view| !view.busy)
+                            && self.view.remotes.as_ref().is_none_or(|view| !view.busy),
                         l,
                         p,
                     )
@@ -470,17 +497,17 @@ impl ManagerUi {
         });
     }
 
-    fn activity(&mut self, ui: &mut Ui, l: Language) {
-        let message = match self.view.activity {
+    fn activity(ui: &mut Ui, view: &RepositoryView, l: Language) -> bool {
+        let message = match view.activity {
             Activity::Starting => l.local("Starting Git services", "Iniciando serviços do Git"),
             Activity::Identifying => l.local("Identifying repository", "Identificando repositório"),
             Activity::Inspecting => l.local("Inspecting repository", "Inspecionando repositório"),
             Activity::Creating => l.local("Creating repository", "Criando repositório"),
             Activity::Cloning => l.local("Cloning repository", "Clonando repositório"),
             Activity::Cancelling => l.local("Cancelling and cleaning up", "Cancelando e limpando"),
-            Activity::Idle | Activity::Trust => return,
+            Activity::Idle | Activity::Trust => return false,
         };
-        let progress = self.view.progress.map(|progress| {
+        let progress = view.progress.map(|progress| {
             let phase = match progress.phase {
                 TransferPhase::Counting => l.local("Counting objects", "Contando objetos"),
                 TransferPhase::Compressing => l.local("Compressing objects", "Comprimindo objetos"),
@@ -497,17 +524,14 @@ impl ManagerUi {
             progress.as_ref().map_or(message, |(label, _)| label),
             progress.as_ref().map(|(_, value)| *value),
         );
-        if let Some(destination) = &self.view.destination {
+        if let Some(destination) = &view.destination {
             let label = l.local("Destination", "Destino");
             ui.add(egui::Label::new(format!("{label} · {}", destination.display())).wrap());
         }
-        if matches!(
-            self.view.activity,
+        matches!(
+            view.activity,
             Activity::Identifying | Activity::Inspecting | Activity::Creating | Activity::Cloning
         ) && ui.button(l.text(Text::Cancel)).clicked()
-        {
-            self.send(RepositoryAction::Cancel);
-        }
     }
 
     pub(super) fn dialogs(&mut self, ui: &Ui, p: Palette, l: Language) {
@@ -560,7 +584,7 @@ impl ManagerUi {
             let title = match form.kind {
                 FormKind::Open => l.local("Add local repository", "Adicionar repositório local"),
                 FormKind::Create => l.local("Create repository", "Criar repositório"),
-                FormKind::Clone => l.local("Clone public repository", "Clonar repositório público"),
+                FormKind::Clone => l.local("Clone repository", "Clonar repositório"),
             };
             let mut close = false;
             let height = (ui.ctx().content_rect().height() - 96.0).max(65.0);
@@ -587,7 +611,7 @@ impl ManagerUi {
             if field(
                 ui,
                 "source",
-                l.local("Public HTTPS URL", "URL HTTPS pública"),
+                l.local("HTTPS or SSH URL", "URL HTTPS ou SSH"),
                 &mut form.url,
             )
             .changed()
@@ -642,6 +666,9 @@ impl ManagerUi {
                 );
             }
         }
+        if form.kind == FormKind::Clone {
+            form.auth.show(ui, super::remotes::ssh_url(&form.url), l);
+        }
         ui.add_space(8.0);
         ui.horizontal_wrapped(|ui| {
             if ui.button(l.text(Text::Cancel)).clicked() {
@@ -659,7 +686,18 @@ impl ManagerUi {
                 .clicked()
                 && let Some(action) = action
             {
-                self.send(action);
+                self.send(
+                    if let RepositoryAction::Clone { destination, url } = action {
+                        let auth = form.auth.take(super::remotes::ssh_url(&url));
+                        RepositoryAction::CloneRemote {
+                            destination,
+                            url,
+                            auth,
+                        }
+                    } else {
+                        action
+                    },
+                );
                 *close = true;
             }
         });
@@ -685,10 +723,11 @@ fn issue_text(l: Language, issue: WorkspaceIssue) -> &'static str {
         WorkspaceIssue::NotRepository => l.local("The directory is outside a Git repository or its metadata is incomplete.", "O diretório está fora de um repositório Git ou os metadados estão incompletos."),
         WorkspaceIssue::PermissionDenied => l.local("The system denied access to this directory.", "O sistema negou acesso a este diretório."),
         WorkspaceIssue::Security => l.local("The repository was declined or its metadata is outside the supported trust policy.", "O repositório foi recusado ou seus metadados não atendem à política de confiança."),
-        WorkspaceIssue::InvalidInput => l.local("Check the directory name, initial branch or public HTTPS URL.", "Confira o nome do diretório, a branch inicial ou a URL HTTPS pública."),
+        WorkspaceIssue::InvalidInput => l.local("Check the directory name, initial branch or HTTPS/SSH URL.", "Confira o nome do diretório, a branch inicial ou a URL HTTPS/SSH."),
         WorkspaceIssue::DestinationExists => l.local("The destination already exists. Choose a new directory name.", "O destino já existe. Escolha um nome de diretório novo."),
         WorkspaceIssue::Cancelled => l.local("The operation was cancelled.", "A operação foi cancelada."),
         WorkspaceIssue::OperationFailed => l.local("Git could not complete this operation. Check the destination or connection and try again.", "O Git não concluiu a operação. Confira o destino ou a conexão e tente novamente."),
+        WorkspaceIssue::Transport(notice) => super::remotes::notice_text(notice, l),
         WorkspaceIssue::FolderActionFailed => l.local("The system could not open the folder.", "O sistema não conseguiu abrir a pasta."),
     }
 }

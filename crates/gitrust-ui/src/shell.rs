@@ -1,6 +1,7 @@
 mod changes;
 mod dialogs;
 mod navigation;
+mod remotes;
 mod repositories;
 
 use repositories::{FormKind, ManagerUi};
@@ -476,11 +477,7 @@ impl Desktop {
                     }
                 }
             }
-            Text::Repository => {
-                for action in [Text::Fetch, Text::Pull, Text::Push] {
-                    unavailable(ui, l, action);
-                }
-            }
+            Text::Repository => self.repository_menu(ui, l, p),
             Text::Branch => {
                 if self.screen == Screen::Demo {
                     for (index, branch) in BRANCHES.iter().enumerate() {
@@ -510,6 +507,20 @@ impl Desktop {
                 ui.close();
             }
             _ => {}
+        }
+    }
+
+    fn repository_menu(&mut self, ui: &mut Ui, l: Language, p: Palette) {
+        if let Some(managed) = self
+            .managed
+            .as_mut()
+            .filter(|managed| managed.view.active.is_some())
+        {
+            managed.remote_popup(ui, l, p);
+        } else {
+            for action in [Text::Fetch, Text::Pull, Text::Push] {
+                unavailable(ui, l, action);
+            }
         }
     }
 
@@ -639,23 +650,18 @@ impl Desktop {
             }
             if !compact && ui.available_width() > 212.0 {
                 ui.separator();
-                let remote = self
+                if let Some(managed) = self
                     .managed
-                    .as_ref()
-                    .and_then(|managed| managed.view.active.as_ref());
-                let remote_status = match remote.map(|workspace| workspace.has_remote) {
-                    Some(false) => l.local("None configured", "Nenhum configurado"),
-                    Some(true) => l.local("Actions unavailable", "Ações indisponíveis"),
-                    None => l.text(Text::Unavailable),
-                };
-                c::context_button(
-                    ui,
-                    Icon::Remote,
-                    l.text(Text::Remote),
-                    remote_status,
-                    false,
-                    p,
-                );
+                    .as_mut()
+                    .filter(|managed| managed.view.active.is_some())
+                {
+                    let label = managed.remotes.label(managed.view.remotes.as_ref(), l);
+                    let response =
+                        c::context_button(ui, Icon::Remote, l.text(Text::Remote), label, true, p);
+                    egui::Popup::menu(&response)
+                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                        .show(|ui| managed.remote_popup(ui, l, p));
+                }
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if c::icon_button(ui, Icon::Settings, l.text(Text::Settings), p).clicked() {

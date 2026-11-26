@@ -2,6 +2,8 @@
 mod changes;
 #[path = "workspace_navigation.rs"]
 mod navigation;
+#[path = "workspace_remotes.rs"]
+mod remotes;
 
 use std::{
     collections::HashMap,
@@ -17,9 +19,9 @@ use gitrust_core::workspaces::{
     TransferProgress, Workspace, WorkspaceIssue,
 };
 use gitrust_git::{
-    CloneRepository, CloneSource, CreateRepository, EngineOptions, EntryKind, FileChange,
-    GitEngine, GitError, GitExecutable, GitTask, GitTaskId, HeadState, Inspection,
-    RepositoryCandidate, RepositoryInfo, RepositoryStatus, Request, TaskValue, TrustedRepository,
+    CloneRepository, CreateRepository, EngineOptions, EntryKind, FileChange, GitEngine, GitError,
+    GitExecutable, GitTask, GitTaskId, HeadState, Inspection, RepositoryCandidate, RepositoryInfo,
+    RepositoryStatus, Request, TaskValue, TrustedRepository,
 };
 use gitrust_storage::Store;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
@@ -110,6 +112,7 @@ enum Operation {
     ChangesWrite(TrustedRepository),
     NavigationRead(navigation::Read),
     NavigationWrite(TrustedRepository),
+    RemoteWrite(TrustedRepository),
 }
 
 struct Pending {
@@ -143,6 +146,7 @@ struct Coordinator {
     candidate: Option<RepositoryCandidate>,
     changes: changes::ChangesState,
     navigation: navigation::State,
+    remotes: remotes::State,
     trusted: HashMap<PathBuf, TrustedRepository>,
     pending: Option<Pending>,
     events: Sender<WorkerEvent>,
@@ -184,6 +188,7 @@ impl Coordinator {
             candidate: None,
             changes: changes::ChangesState::default(),
             navigation: navigation::State::default(),
+            remotes: remotes::State::default(),
             trusted: HashMap::new(),
             pending: None,
             events,
@@ -283,6 +288,9 @@ impl Coordinator {
         if let Some(view) = &mut self.view.navigation {
             view.busy = false;
         }
+        if let Some(view) = &mut self.view.remotes {
+            view.busy = false;
+        }
         self.candidate = None;
         self.view.candidate = None;
         self.view.progress = None;
@@ -345,7 +353,11 @@ impl Coordinator {
     fn on_action(&mut self, action: RepositoryAction) {
         if matches!(
             self.pending.as_ref().map(|job| &job.operation),
-            Some(Operation::ChangesWrite(_) | Operation::NavigationWrite(_))
+            Some(
+                Operation::ChangesWrite(_)
+                    | Operation::NavigationWrite(_)
+                    | Operation::RemoteWrite(_)
+            )
         ) && !matches!(
             action,
             RepositoryAction::Cancel | RepositoryAction::SavePreferences(_)
@@ -354,6 +366,7 @@ impl Coordinator {
         }
         match action {
             RepositoryAction::Changes(intent) => self.on_changes(intent),
+            RepositoryAction::Remote(intent) => self.on_remote(intent),
             RepositoryAction::Navigate(intent) => self.on_navigation(intent),
             RepositoryAction::Browse => self.folder_dialog(false),
             RepositoryAction::BrowseDestination => self.folder_dialog(true),
@@ -394,7 +407,14 @@ impl Coordinator {
                     Err(error) => self.issue(issue(&error)),
                 }
             }
-            RepositoryAction::Clone { destination, url } => self.clone(&destination, &url),
+            RepositoryAction::Clone { destination, url } => {
+                self.clone(&destination, &url, gitrust_core::remotes::Auth::default());
+            }
+            RepositoryAction::CloneRemote {
+                destination,
+                url,
+                auth,
+            } => self.clone(&destination, &url, auth),
             RepositoryAction::Cancel => {
                 if let Some(job) = &self.pending {
                     job.task.cancel();
@@ -429,10 +449,10 @@ impl Coordinator {
         }
     }
 
-    fn clone(&mut self, destination: &Path, url: &str) {
-        let request = CloneSource::new(url).and_then(|source| {
+    fn clone(&mut self, destination: &Path, url: &str, auth: gitrust_core::remotes::Auth) {
+        let request = gitrust_git::RemoteEndpoint::new(url).and_then(|source| {
             let path = std::path::absolute(destination).map_err(GitError::Io)?;
-            CloneRepository::new(path, source)
+            CloneRepository::remote(path, source, auth, std::env::current_exe().ok())
         });
         match request {
             Ok(request) => {
@@ -444,23 +464,26 @@ impl Coordinator {
                 );
                 if self.pending.is_some() {
                     self.view.destination = Some(destination.to_owned());
+                    self.transfer_progress(rx);
                 }
-                let events = self.events.clone();
-                let epoch = self.operation_epoch;
-                let _ = thread::Builder::new()
-                    .name("gitrust-clone-progress".into())
-                    .spawn(move || {
-                        while let Ok(progress) = rx.recv() {
-                            if events.send(WorkerEvent::Progress(epoch, progress)).is_err() {
-                                break;
-                            }
-                            // Coalesce progress reports from fast transfers.
-                            thread::sleep(Duration::from_millis(80));
-                        }
-                    });
             }
             Err(error) => self.issue(issue(&error)),
         }
+    }
+
+    fn transfer_progress(&self, rx: mpsc::Receiver<TransferProgress>) {
+        let events = self.events.clone();
+        let epoch = self.operation_epoch;
+        let _ = thread::Builder::new()
+            .name("gitrust-transfer-progress".into())
+            .spawn(move || {
+                while let Ok(progress) = rx.recv() {
+                    if events.send(WorkerEvent::Progress(epoch, progress)).is_err() {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(80));
+                }
+            });
     }
 
     fn on_reply(&mut self, event: WorkerEvent) -> Option<PathBuf> {
@@ -476,7 +499,10 @@ impl Coordinator {
                 }
             }
             WorkerEvent::Progress(epoch, progress) => {
-                if epoch == self.operation_epoch && self.view.activity == Activity::Cloning {
+                if epoch == self.operation_epoch
+                    && (self.view.activity == Activity::Cloning
+                        || self.view.remotes.as_ref().is_some_and(|view| view.busy))
+                {
                     self.view.progress = Some(progress);
                 }
             }
@@ -513,6 +539,10 @@ impl Coordinator {
             Operation::NavigationRead(_) | Operation::NavigationWrite(_)
         ) {
             self.complete_navigation(pending.operation, report.result);
+            return;
+        }
+        if let Operation::RemoteWrite(trust) = pending.operation {
+            self.complete_remote(trust, report.result);
             return;
         }
         match report.result {
@@ -597,6 +627,9 @@ impl Coordinator {
         if changed_workspace {
             self.watch(&info.repository);
         }
+        if changed_workspace {
+            self.clear_remotes();
+        }
         self.load_navigation(trust, changed_workspace);
     }
 
@@ -610,7 +643,8 @@ impl Coordinator {
             | Operation::ChangesRead
             | Operation::ChangesWrite(_)
             | Operation::NavigationRead(_)
-            | Operation::NavigationWrite(_) => None,
+            | Operation::NavigationWrite(_)
+            | Operation::RemoteWrite(_) => None,
         };
         if matches!(
             problem,
@@ -632,6 +666,7 @@ impl Coordinator {
                 self.view.active = None;
                 self.set_changes(None, true);
                 self.clear_navigation();
+                self.clear_remotes();
                 self.unwatch();
             }
         }
@@ -657,7 +692,8 @@ impl Coordinator {
                     | Operation::ChangesRead
                     | Operation::ChangesWrite(_)
                     | Operation::NavigationRead(_)
-                    | Operation::NavigationWrite(_) => false,
+                    | Operation::NavigationWrite(_)
+                    | Operation::RemoteWrite(_) => false,
                 });
         if pending_for_path || self.view.candidate.as_deref() == Some(path) {
             self.invalidate();
@@ -667,6 +703,7 @@ impl Coordinator {
             self.view.active = None;
             self.set_changes(None, true);
             self.clear_navigation();
+            self.clear_remotes();
             self.unwatch();
         }
         self.save_recent();
@@ -737,6 +774,7 @@ fn repo_path(candidate: &RepositoryCandidate) -> &Path {
 
 fn issue(error: &GitError) -> WorkspaceIssue {
     match error {
+        GitError::Remote(notice) => WorkspaceIssue::Transport(*notice),
         GitError::GitNotFound
         | GitError::UnsupportedGitVersion(_)
         | GitError::InvalidExecutable => WorkspaceIssue::GitUnavailable,

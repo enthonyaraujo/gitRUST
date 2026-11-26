@@ -186,6 +186,8 @@ pub enum WorkspaceIssue {
     Cancelled,
     /// An operation failed and can be retried.
     OperationFailed,
+    /// A credential-free failure from an explicit transport.
+    Transport(crate::remotes::RemoteNotice),
     /// Native folder action failed.
     FolderActionFailed,
 }
@@ -193,6 +195,8 @@ pub enum WorkspaceIssue {
 /// Data consumed by the repository workspace view.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RepositoryView {
+    /// Configured remote endpoints and transport status.
+    pub remotes: Option<crate::remotes::RemotesView>,
     /// Branches, history and merge state for the active workspace.
     pub navigation: Option<crate::navigation::NavigationView>,
     /// Active changes workspace, after a real inspection.
@@ -226,6 +230,8 @@ pub struct RepositoryView {
 /// Intent sent by the native view to the worker coordinator.
 #[derive(Clone)]
 pub enum RepositoryAction {
+    /// Apply a reviewed remote operation.
+    Remote(crate::remotes::RemoteIntent),
     /// Request a branch, history or merge operation.
     Navigate(crate::navigation::NavigationIntent),
     /// Dispatch an intent for the active changes workspace.
@@ -255,6 +261,12 @@ pub enum RepositoryAction {
     },
     /// Clone from an explicitly submitted public URL.
     Clone { destination: PathBuf, url: String },
+    /// Clone via an explicitly selected transport and authentication method.
+    CloneRemote {
+        destination: PathBuf,
+        url: String,
+        auth: crate::remotes::Auth,
+    },
     /// Cancel the current request.
     Cancel,
     /// Save changed local appearance preferences.
@@ -275,7 +287,8 @@ impl std::fmt::Debug for RepositoryAction {
             Self::Refresh => "Refresh",
             Self::Focus => "Focus",
             Self::Create { .. } => "Create",
-            Self::Clone { .. } => "Clone",
+            Self::Clone { .. } | Self::CloneRemote { .. } => "Clone",
+            Self::Remote(_) => "Remote",
             Self::Cancel => "Cancel",
             Self::RetryGit => "RetryGit",
             Self::SavePreferences(_) => "SavePreferences",
