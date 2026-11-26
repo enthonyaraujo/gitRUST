@@ -82,3 +82,12 @@ The 16 local integration tests passed with the system Git 2.56.1 and with Git 2.
 ## Stage 03 operations
 
 `Inspection::Workspace` returns HEAD and optional worktree status from one preflight. `Request::Create` prepares an unborn repository in a new directory. `Request::Clone` accepts a typed public HTTPS source and optional bounded progress observer. Both return a validated candidate for explicit session authorization. The engine can cancel before atomic publication and does not replace an existing destination. Clone and materialization use separate network and local policies respectively. [Repository management](REPOSITORY_MANAGEMENT.md)
+
+
+## Stage 04 mutations
+
+`Inspection::Change`, `DiscardReview` and `CommitDraft` produce read projections. `Request::Mutate` accepts only stage, unstage, selected patches, reviewed discard and commit drafts. Each request is serialized by common Git directory, compares the current status and uses the per-worktree index lock. Existing read and provisioning requests retain their permissions.
+
+Whole-file path lists are passed as NUL-framed literal operands. Partial changes use the same bytes for validation and application. Signed and unsigned commits use explicit identity, and ref publication checks the previous object ID. The engine reports a completed Git ref/index publication even if the cancellation flag arrives afterward. The coordinator refreshes the workspace on every terminal mutation outcome.
+
+[Changes and Commits](CHANGES_AND_COMMITS.md) · [ADR 0009](adr/0009-local-changes-and-commits.md)

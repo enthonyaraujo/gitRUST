@@ -145,3 +145,10 @@ cargo test --locked -p gitrust-git --test inspection public_https_clone_material
 ```
 
 For the minimum-version check use an isolated Git 2.45.0 build with its matching HTTPS helper when exercising clone. The installed Git remains the default outside the test process.
+
+
+### Stage 04 verification
+
+On Linux, run the locked stable and MSRV checks and tests, Clippy, the release build, and the dependency audit. The Git integration fixtures use disposable repositories and can be rerun with Git 2.45.0 first on `PATH`. Use the built native desktop app against another disposable repository to verify staging, partial operations, commits, amend and reviewed discard. OpenPGP and SSH signing use system tools only when selected. Automatic Windows and macOS CI jobs are suspended during Stages 04–06 and remain available through manual workflow dispatch.
+
+[Changes and Commits](CHANGES_AND_COMMITS.md) · [Cross-platform validation](ROADMAP.md#stage-07--cross-platform-validation)

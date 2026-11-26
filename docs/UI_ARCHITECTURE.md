@@ -52,3 +52,10 @@ The existing `repository` and `branch` diagnostic views open the actual popup co
 ## Stage 03 repository workspace
 
 Interactive launches show the real repository workspace, with a searchable Repository selector, recent entries, and forms for open, init and clone. The UI emits repository actions and receives snapshots. Directory dialogs, Git commands, persistence and watcher management run outside rendering. The theme, typography, native AccessKit interactions and Wayland IME flow are shared with the existing shell. Synthetic workspaces remain available via diagnostics flags. [Repository management](REPOSITORY_MANAGEMENT.md)
+
+
+## Stage 04 Changes workspace
+
+The active workspace uses the Stage 01 diff viewport for worker-indexed real patches. Rows are keyed by path and comparison layer, and the coordinator ties results to a version of the authorized repository. File and diff rows are virtualized. The same controls back the compact tabs and the wide layout. The compositor holds editable text locally until a mutation succeeds and clears the submitted draft only when that commit is confirmed. Discard and amend show native confirmation dialogs. The AccessKit tree exposes file selection, hunk and line selection, the diff viewport and labeled commit fields.
+
+[Changes and Commits](CHANGES_AND_COMMITS.md)

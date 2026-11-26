@@ -8,11 +8,11 @@ Inspired by the approachable workflow of [GitHub Desktop](https://github.com/des
 
 ## Current Project Status
 
-> **Current Stage:** Stage 01 — Design System completed (`v0.1.0-alpha.0`).
+> **Current stage:** Stage 04 — Changes and Commits, local implementation under review (`v0.1.0-alpha.0`).
 
-The normal workspace opens without a repository. Settings provides Light, Dark and System themes, English and Brazilian Portuguese, and 100%–200% session zoom. Open the component gallery with `gitrust --diagnostics`. The gallery and sample workspace illustrate Changes, History, unified and side-by-side diffs, and long-list behavior using synthetic data.
+Open and authorize a local repository, create a new one, or clone a public HTTPS source. The Changes workspace shows real staged and unstaged diffs, supports file and partial staging, and creates commits from the index. Reviewed discard, amend, and explicit commit signing are available in the Stage 04 implementation. Settings provides Light, Dark and System themes, English and Brazilian Portuguese, and 100%–200% zoom.
 
-Git integration begins with Stage 02. Repository operations, clone, staging, commits, networking and credentials remain unavailable. See [the roadmap](docs/ROADMAP.md) for the remaining stages.
+Run `gitrust --diagnostics` to explore the component gallery. The [roadmap](docs/ROADMAP.md) describes the Linux-first MVP and the Stage 07 cross-platform release gate.
 
 ---
 
@@ -79,15 +79,16 @@ cargo run -p gitrust-app --release
 ## Documentation Index
 
 - [Design System](docs/DESIGN_SYSTEM.md) — Visual direction, tokens, typography, and component catalog.
+- [Changes and Commits](docs/CHANGES_AND_COMMITS.md) — Real diffs, staging, discard, commit creation, amend, and signing.
 - [Native UI Architecture](docs/UI_ARCHITECTURE.md) — Shell modules, diagnostic mode, and scalable rendering.
 - [Accessibility](docs/ACCESSIBILITY.md) — Keyboard operation, AccessKit, and validation scope.
 - [Internationalization](docs/INTERNATIONALIZATION.md) — English and Brazilian Portuguese catalog and fallback.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — System architecture, crate DAG, and Git engine design.
-- [`docs/ROADMAP.md`](docs/ROADMAP.md) — Official development stages (`00` through `10`) and `v0.1.0` scope.
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — Official development stages (`00` through `11`) and `v0.1.0` scope.
 - [`docs/BUILD.md`](docs/BUILD.md) — Platform dependencies, compilation guide, and runtime environment variables.
 - [`docs/SECURITY_ARCHITECTURE.md`](docs/SECURITY_ARCHITECTURE.md) — Threat model, untrusted repository defenses, and secret policies.
 - [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) — Exploratory resource targets and reproducible benchmark methodology.
-- [`docs/adr/README.md`](docs/adr/README.md) — Architecture Decision Records (`ADR-0001` to `ADR-0006`).
+- [`docs/adr/README.md`](docs/adr/README.md) — Architecture Decision Records (`ADR-0001` to `ADR-0009`).
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — Contribution guidelines and quality gates.
 - [`SECURITY.md`](SECURITY.md) — Vulnerability reporting and disclosure policy.
 - [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) — Third-party dependency elections and embedded font attributions.
