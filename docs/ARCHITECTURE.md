@@ -21,16 +21,16 @@ All workspace crates form a strict **Directed Acyclic Graph (DAG)**. Circular de
 flowchart TD
     app["gitrust-app (binary: gitrust)"]
     ui["gitrust-ui (egui views & theme)"]
-    git["gitrust-git (Git engine boundary — Stage 02)"]
-    storage["gitrust-storage (local config & keychain policy — Stage 03)"]
+    git["gitrust-git (Git inspection & provisioning)"]
+    storage["gitrust-storage (local profile)"]
     providers["gitrust-providers (GitHub/GitLab boundary — Stage 08)"]
     core["gitrust-core (pure state, models & events)"]
 
     app --> ui
     app --> core
-    app -.->|"dev-dependencies (Stage 00 integration tests)"| git
-    app -.->|"dev-dependencies (Stage 00 integration tests)"| storage
-    app -.->|"dev-dependencies (Stage 00 integration tests)"| providers
+    app --> git
+    app --> storage
+    app -.->|"integration tests"| providers
     ui --> core
     git --> core
     storage --> core
@@ -41,11 +41,11 @@ flowchart TD
 
 | Crate | Status | Responsibility | External Dependencies |
 | --- | --- | --- | --- |
-| `gitrust-core` | **Implemented (Foundation)** | Pure domain models, metadata, runtime/host diagnostics, `AppState`, and deterministic `AppEvent` reducer. | None (`std` only) |
-| `gitrust-ui` | **Implemented** | Native `egui` shell and design system decoupled from OS windowing and headlessly testable via `egui::Context`. | `egui` |
-| `gitrust-app` | **Implemented (Foundation)** | Native binary (`gitrust`), CLI flag handling, `eframe` + `wgpu` initialization, Wayland/X11 integration, and clean shutdown lifecycle. | `eframe`, `egui`, `tracing`, `tracing-subscriber` |
-| `gitrust-git` | **Stage 02 implementation** | Typed, local Git discovery and read-only inspection, asynchronous task scheduling and byte-oriented parsers. | `gitrust-core`, `process-wrap` |
-| `gitrust-storage` | **Boundary Only (Planned Stage 03)** | Storage security baseline prohibiting plaintext credentials and telemetry by default. Persistent config and keychain adapters scheduled for **Stage 03 / Stage 08**. | None (`std` only) |
+| `gitrust-core` | **Implemented** | Pure domain models, workspace actions and snapshots, runtime diagnostics, and the deterministic `AppEvent` reducer. | None (`std` only) |
+| `gitrust-ui` | **Implemented** | Native `egui` shell and design system decoupled from OS windowing and headlessly testable via `egui::Context`. | `gitrust-core`, `egui` |
+| `gitrust-app` | **Stage 03 implementation** | Native entrypoint, workspace coordinator, dialogs and watcher lifecycle. | `gitrust-core`, `gitrust-git`, `gitrust-storage`, `gitrust-ui`, `eframe`, `egui`, `rfd`, `notify`, `crossbeam-channel`, `tracing`, `tracing-subscriber` |
+| `gitrust-git` | **Stage 03 implementation** | Typed Git discovery, local inspection, init and public HTTPS clone. Owns scheduling, subprocess policy and byte-oriented parsing. | `gitrust-core`, `process-wrap`, `tempfile`, `url`, `rustix` (Linux/macOS) |
+| `gitrust-storage` | **Stage 03 implementation** | Versioned preferences and workspace catalog, with native local paths and atomic file replacement. | `gitrust-core`, `directories`, `tempfile` |
 | `gitrust-providers` | **Boundary Only (Planned Stage 08)** | Strict TLS policy contract. GitHub, GitLab, and hosting API clients scheduled for **Stage 08**. | None (`std` only) |
 
 ### Documented Adjustments to the Reference Directory Layout
@@ -74,4 +74,8 @@ System Git supplies the initial implementation behind a typed `gitrust-git` boun
 
 Discovery and authorization are separate. Allowlisted requests run in a bounded worker pool and return typed models through a completion channel. The engine constructs every command, using the absolute Git executable, discrete native arguments, literal file selectors and a cleared subprocess environment. Machine formats preserve bytes for Git paths and commit content. The engine keeps subprocess supervision and decoding independent of presentation.
 
-The canonical common Git directory is the scheduler identity for a working tree and its linked worktrees. Read-only operations may coexist. Reserved write classes require exclusive access with writer ordering. The UI can use completion notifications when the repository and changes stages connect the engine. [Git Engine contract](GIT_ENGINE.md)
+The canonical common Git directory is the scheduler identity for a working tree and its linked worktrees. Read-only operations may coexist. Reserved write classes require exclusive access with writer ordering. The workspace coordinator consumes engine completion notifications. [Git Engine contract](GIT_ENGINE.md)
+
+## 5. Workspace coordination (Stage 03)
+
+The shell sends the repository actions defined in gitrust-core to an application-owned coordinator. The coordinator resolves preferences, invokes the typed Git Engine, handles native folder selection, and owns cancellation and refresh. Only immutable presentation data returns to egui. The engine and storage remain independent of the UI. [Repository management](REPOSITORY_MANAGEMENT.md) · [ADR-0008](adr/0008-workspace-management.md)

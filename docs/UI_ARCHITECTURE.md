@@ -47,3 +47,8 @@ The current diff serves static fixture text. A future adapter can supply owned p
 Tab activation and keyboard shortcuts use the same shell transition. The transition preserves the current search query and recomputes the matching rows for the next tab. Row focus and selection continue to use the fixture identity within the list scope. Branch changes keep their separate reset behavior. Tabs publish the selected property on their AccessKit nodes while keyboard focus remains an independent state.
 
 The existing `repository` and `branch` diagnostic views open the actual popup controls on launch. Native capture records include the executable digest, launch arguments, framebuffer dimensions and effective content points. The Stage 01.2 artifact set includes captures of both popups open and separate XWayland automation that activates their accessible controls. A smoke screenshot alone does not verify a subsequent action. Capture manifest (`target/stage01.2-evidence/capture-manifest.json`) · Interaction log (`target/stage01.2-evidence/native-access-final.log`)
+
+
+## Stage 03 repository workspace
+
+Interactive launches show the real repository workspace, with a searchable Repository selector, recent entries, and forms for open, init and clone. The UI emits repository actions and receives snapshots. Directory dialogs, Git commands, persistence and watcher management run outside rendering. The theme, typography, native AccessKit interactions and Wayland IME flow are shared with the existing shell. Synthetic workspaces remain available via diagnostics flags. [Repository management](REPOSITORY_MANAGEMENT.md)
