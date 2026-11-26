@@ -14,7 +14,8 @@ This directory records significant architectural decisions made in **gitRUST**, 
 | [ADR-0006](0006-opt-in-ui-diagnostics.md) | Keep synthetic data in opt-in UI diagnostics | Proposed | 01 |
 | [ADR-0007](0007-local-git-inspection.md) | Local Git inspection with an explicit metadata trust boundary | Accepted | 02 |
 | [ADR-0008](0008-workspace-management.md) | Session-authorized workspaces and local provisioning | Accepted | 03 |
-| [ADR-0009](0009-local-changes-and-commits.md) | Local changes and commits | Proposed | 04 |
+| [ADR-0009](0009-local-changes-and-commits.md) | Local changes and commits | Accepted | 04 |
+| [ADR-0010](0010-branches-history-and-merge.md) | Branches, history, and merge | Proposed | 05 |
 
 ## Lifecycle States
 

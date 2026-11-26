@@ -8,9 +8,9 @@ Inspired by the approachable workflow of [GitHub Desktop](https://github.com/des
 
 ## Current Project Status
 
-> **Current stage:** Stage 04 — Changes and Commits, local implementation under review (`v0.1.0-alpha.0`).
+> **Current stage:** Stage 05 — Branches and History, local implementation under review (`v0.1.0-alpha.0`).
 
-Open and authorize a local repository, create a new one, or clone a public HTTPS source. The Changes workspace shows real staged and unstaged diffs, supports file and partial staging, and creates commits from the index. Reviewed discard, amend, and explicit commit signing are available in the Stage 04 implementation. Settings provides Light, Dark and System themes, English and Brazilian Portuguese, and 100%–200% zoom.
+Open and authorize a local repository, create a new one, or clone a public HTTPS source. The Changes workspace shows real staged and unstaged diffs, supports file and partial staging, and creates commits from the index. Reviewed discard, amend, and explicit commit signing are available. The application also supports local branches, commit history and basic merges. Settings provides Light, Dark and System themes, English and Brazilian Portuguese, and 100%–200% zoom.
 
 Run `gitrust --diagnostics` to explore the component gallery. The [roadmap](docs/ROADMAP.md) describes the Linux-first MVP and the Stage 07 cross-platform release gate.
 
@@ -79,6 +79,7 @@ cargo run -p gitrust-app --release
 ## Documentation Index
 
 - [Design System](docs/DESIGN_SYSTEM.md) — Visual direction, tokens, typography, and component catalog.
+- [Branches and History](docs/BRANCHES_AND_HISTORY.md) — Branch operations, the commit graph, commit inspection, and merges.
 - [Changes and Commits](docs/CHANGES_AND_COMMITS.md) — Real diffs, staging, discard, commit creation, amend, and signing.
 - [Native UI Architecture](docs/UI_ARCHITECTURE.md) — Shell modules, diagnostic mode, and scalable rendering.
 - [Accessibility](docs/ACCESSIBILITY.md) — Keyboard operation, AccessKit, and validation scope.
@@ -88,7 +89,7 @@ cargo run -p gitrust-app --release
 - [`docs/BUILD.md`](docs/BUILD.md) — Platform dependencies, compilation guide, and runtime environment variables.
 - [`docs/SECURITY_ARCHITECTURE.md`](docs/SECURITY_ARCHITECTURE.md) — Threat model, untrusted repository defenses, and secret policies.
 - [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) — Exploratory resource targets and reproducible benchmark methodology.
-- [`docs/adr/README.md`](docs/adr/README.md) — Architecture Decision Records (`ADR-0001` to `ADR-0009`).
+- [`docs/adr/README.md`](docs/adr/README.md) — Architecture Decision Records (`ADR-0001` to `ADR-0010`).
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — Contribution guidelines and quality gates.
 - [`SECURITY.md`](SECURITY.md) — Vulnerability reporting and disclosure policy.
 - [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) — Third-party dependency elections and embedded font attributions.

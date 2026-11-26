@@ -1,6 +1,6 @@
 # ADR 0009 — Local changes and commits
 
-- Status: Proposed for Stage 04 review
+- Status: Accepted
 - Scope: Local index and worktree mutations, commit creation, amend and signing
 
 ## Context
