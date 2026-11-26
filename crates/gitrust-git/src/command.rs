@@ -123,8 +123,12 @@ pub enum Inspection {
     CommitPatch(ObjectId, Option<ObjectId>, RepoPath),
     /// Local reference and merge state.
     Navigation,
+    /// Refresh navigation and remote state together.
+    WorkspaceNavigation,
     /// Local and remote-tracking references.
     Branches,
+    /// Read credential-free remote and upstream state without network access.
+    Remotes,
 }
 
 /// One task accepted by the engine.
@@ -136,10 +140,12 @@ pub enum Request {
     Inspect(TrustedRepository, Inspection),
     /// Initialize a newly requested workspace with no custom templates.
     Create(CreateRepository),
-    /// Clone explicitly from a public HTTPS source.
+    /// Clone explicitly from an approved network endpoint.
     Clone(CloneRepository),
     /// Apply a typed operation to a revalidated workspace.
     Mutate(TrustedRepository, Box<Mutation>),
+    /// Serialize a reviewed remote action by common Git directory.
+    Remote(TrustedRepository, Box<crate::RemoteRequest>),
 }
 
 impl Request {
@@ -148,7 +154,9 @@ impl Request {
     pub const fn safety_class(&self) -> OperationSafetyClass {
         match self {
             Self::Identify(_) | Self::Inspect(..) => OperationSafetyClass::ReadOnly,
-            Self::Create(_) | Self::Clone(_) => OperationSafetyClass::SerializedWrite,
+            Self::Create(_) | Self::Clone(_) | Self::Remote(..) => {
+                OperationSafetyClass::SerializedWrite
+            }
             Self::Mutate(_, operation) => operation.safety_class(),
         }
     }
@@ -157,6 +165,10 @@ impl Request {
 pub(crate) enum Builtin {
     Add,
     Branch,
+    Remote,
+    Fetch,
+    Push,
+    Rebase,
     Switch,
     Merge,
     MergeBase,
@@ -188,6 +200,10 @@ impl Builtin {
             Self::CatFile => "cat-file",
             Self::Add => "add",
             Self::Branch => "branch",
+            Self::Remote => "remote",
+            Self::Fetch => "fetch",
+            Self::Push => "push",
+            Self::Rebase => "rebase",
             Self::Switch => "switch",
             Self::Merge => "merge",
             Self::MergeBase => "merge-base",

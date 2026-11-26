@@ -21,6 +21,7 @@ pub use engine::{
     GitTaskId, GitTaskState, MergeState, NavigationOutcome, NavigationResult, NavigationSnapshot,
     RefMutation, RefTip, TaskReport, TaskValue,
 };
+pub use engine::{RebaseProof, RemoteRequest, RemoteResult, RemoteSnapshot};
 pub use executable::{GitExecutable, GitVersion};
 pub use history::{BranchInfo, BranchList, CommitInfo, CommitSignature, History, Signature};
 pub use model::{

@@ -2,6 +2,8 @@
 mod navigation;
 #[path = "provision.rs"]
 mod provision;
+#[path = "remote_ops.rs"]
+mod remote_ops;
 #[path = "write.rs"]
 mod write;
 
@@ -18,6 +20,8 @@ use std::{
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
+
+pub use remote_ops::{RebaseProof, RemoteRequest, RemoteResult, RemoteSnapshot};
 
 pub use navigation::{
     AbortProof, BranchSource, CommitDetails, CommitFile, MergeState, NavigationOutcome,
@@ -111,12 +115,18 @@ pub enum TaskValue {
     History(History),
     /// Branches and merge state.
     Navigation(crate::NavigationSnapshot),
+    /// Navigation and remote configuration from one workspace inspection.
+    WorkspaceNavigation(Box<(crate::NavigationSnapshot, RemoteSnapshot)>),
     /// Result of a branch or merge mutation.
     NavigationResult(crate::NavigationResult),
     /// Commit details and file statistics.
     CommitDetails(crate::CommitDetails),
     /// Branch snapshot.
     Branches(BranchList),
+    /// Sanitized remote configuration and upstream.
+    Remotes(RemoteSnapshot),
+    /// Terminal result of a remote or remote configuration operation.
+    RemoteResult(RemoteResult),
 }
 
 /// Terminal outcome, including successful process diagnostics if requested by
@@ -298,7 +308,9 @@ impl GitEngine {
         let access = Access {
             identity: match &request {
                 Request::Identify(_) | Request::Create(_) | Request::Clone(_) => None,
-                Request::Inspect(repository, _) | Request::Mutate(repository, _) => {
+                Request::Inspect(repository, _)
+                | Request::Mutate(repository, _)
+                | Request::Remote(repository, _) => {
                     Some(repository.repository().identity().clone())
                 }
             },
@@ -492,7 +504,10 @@ fn worker_loop(scheduler: &Scheduler, executable: &GitExecutable, options: Engin
         let result = runner.execute(&job.request).and_then(|value| {
             if !matches!(
                 value,
-                TaskValue::Provisioned(_) | TaskValue::Changed(_) | TaskValue::NavigationResult(_)
+                TaskValue::Provisioned(_)
+                    | TaskValue::Changed(_)
+                    | TaskValue::NavigationResult(_)
+                    | TaskValue::RemoteResult(_)
             ) {
                 control.check()?;
             }
@@ -520,6 +535,11 @@ impl Runner<'_> {
             }
             Request::Inspect(repository, operation) => self.inspect(repository, operation),
             Request::Mutate(repository, operation) => self.mutate(repository, operation),
+            Request::Remote(repository, operation) => {
+                let result = self.remote_request(repository, operation);
+                self.outputs.clear();
+                result
+            }
             Request::Create(request) => {
                 self.provision(&request.path, provision::Operation::Init(&request.branch))
             }
@@ -595,8 +615,16 @@ impl Runner<'_> {
                 self.history_page(location, root.clone(), tips, *page, width)
                     .map(TaskValue::History)
             }
+            Inspection::Remotes => self.remotes(trusted, width).map(TaskValue::Remotes),
             Inspection::Branches => self.branches(trusted, width).map(TaskValue::Branches),
             Inspection::Navigation => self.navigation(trusted, width).map(TaskValue::Navigation),
+            Inspection::WorkspaceNavigation => {
+                let navigation = self.navigation(trusted, width)?;
+                let remotes = self.remotes(trusted, width)?;
+                Ok(TaskValue::WorkspaceNavigation(Box::new((
+                    navigation, remotes,
+                ))))
+            }
             Inspection::CommitDetails(id, parent) => self
                 .details(location, id, parent.as_ref(), width)
                 .map(TaskValue::CommitDetails),
