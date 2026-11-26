@@ -74,3 +74,7 @@ All external crates in the `Linux`, `Windows`, and `macOS` dependency graphs use
 ## Stage 04 system executables
 
 Local mutations add no Cargo dependencies or bundled assets. Git remains a separately installed system executable. On Linux, explicitly requested signing can invoke the installed GnuPG or OpenSSH executable. Neither executable nor any key is distributed with gitRUST.
+
+## Remote operations
+
+Stage 06 adds no Cargo dependencies. HTTPS and smart Git are supplied by the installed Git executable and its transport helper. SSH uses the installed OpenSSH client. Git's credential cache and an installed Git Secret Service helper are opt-in runtime tools. These programs are invoked from the system and are not redistributed with the application. Python 3, OpenSSL and the OpenSSH server are used only by the Linux loopback test fixtures.

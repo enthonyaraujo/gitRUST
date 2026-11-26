@@ -66,3 +66,7 @@ The active workspace uses the Stage 01 diff viewport for worker-indexed real pat
 The Branch selector keeps native path and reference identity separate from display labels. History virtualizes graph-aligned commit rows and the commit inspector reuses Unified and Split diffs. Compact tabs keep the history list, metadata and diff reachable at high zoom.
 
 [Branches and History](BRANCHES_AND_HISTORY.md) · [ADR 0010](adr/0010-branches-history-and-merge.md)
+
+## Stage 06 remote operations
+
+The native Remote selector displays the selected endpoint and the upstream, with divergence labeled as local tracking data. Modal forms review endpoint, destination branch and strategy before a request is submitted. HTTPS secrets use a masked text field and move out of the form at submission. In-flight progress and cancellation use workspace events. Merge and rebase conflicts return to the existing Changes workspace. Remote labels have English and Brazilian Portuguese variants and use the existing egui accessibility bridge. [Remote operations](REMOTE_OPERATIONS.md)

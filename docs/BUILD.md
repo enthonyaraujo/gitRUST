@@ -152,3 +152,14 @@ For the minimum-version check use an isolated Git 2.45.0 build with its matching
 On Linux, run the locked stable and MSRV checks and tests, Clippy, the release build, and the dependency audit. The Git integration fixtures use disposable repositories and can be rerun with Git 2.45.0 first on `PATH`. Use the built native desktop app against another disposable repository to verify staging, partial operations, commits, amend and reviewed discard. OpenPGP and SSH signing use system tools only when selected. Automatic Windows and macOS CI jobs are suspended during Stages 04–06 and remain available through manual workflow dispatch.
 
 [Changes and Commits](CHANGES_AND_COMMITS.md) · [Cross-platform validation](ROADMAP.md#stage-07--cross-platform-validation)
+
+## Stage 06 remote integration fixtures
+
+On Linux, the workspace test suite uses Python 3 and OpenSSL for an ephemeral loopback HTTPS server backed by `git http-backend`. When OpenSSH server and key generation tools are available, the SSH fixture starts a temporary loopback server with disposable keys and invokes the application's native bridge. These fixtures require no provider account or access to a public service. Run both explicitly with:
+
+```bash
+cargo test --locked -p gitrust-git --test inspection remotes:: -- --nocapture
+cargo test --locked -p gitrust-app --test remote_ssh -- --nocapture
+```
+
+Fixtures report missing prerequisites on standard error. To validate the Git 2.45.0 floor, prepend an installed Git 2.45.0 with its matching transport helpers to the test command's `PATH`. The OpenSSH and Secret Service integration paths are Linux-first. Stage 07 covers platform trust stores, helper discovery, the SSH client path and native GUI validation on Windows and macOS.

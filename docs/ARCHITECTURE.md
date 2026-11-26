@@ -44,7 +44,7 @@ flowchart TD
 | `gitrust-core` | **Implemented** | Pure domain models, workspace actions and snapshots, runtime diagnostics, and the deterministic `AppEvent` reducer. | None (`std` only) |
 | `gitrust-ui` | **Implemented** | Native `egui` shell and design system decoupled from OS windowing and headlessly testable via `egui::Context`. | `gitrust-core`, `egui` |
 | `gitrust-app` | **Stage 04 implementation** | Native entrypoint, workspace coordinator, dialogs, watcher lifecycle and reconciliation of changes and commits. | `gitrust-core`, `gitrust-git`, `gitrust-storage`, `gitrust-ui`, `eframe`, `egui`, `rfd`, `notify`, `crossbeam-channel`, `tracing`, `tracing-subscriber` |
-| `gitrust-git` | **Stage 04 implementation** | Typed Git discovery, inspection, init, public HTTPS clone and local mutations. Owns scheduling, subprocess policy and byte-oriented parsing. | `gitrust-core`, `process-wrap`, `tempfile`, `url`, `rustix` (Linux/macOS) |
+| `gitrust-git` | **Stage 06 implementation** | Typed repository discovery, inspection, provisioning, local writes and explicit remote operations. Owns scheduling, subprocess policy and byte-oriented parsing. | `gitrust-core`, `process-wrap`, `tempfile`, `url`, `rustix` (Linux/macOS) |
 | `gitrust-storage` | **Stage 03 implementation** | Versioned preferences and workspace catalog, with native local paths and atomic file replacement. | `gitrust-core`, `directories`, `tempfile` |
 | `gitrust-providers` | **Boundary Only (Planned Stage 09)** | Strict TLS policy contract. GitHub, GitLab, and hosting API clients scheduled for **Stage 09**. | None (`std` only) |
 
@@ -93,3 +93,7 @@ The shell sends the repository actions defined in gitrust-core to an application
 The app coordinator builds bounded graph rows from paged Git objects. The shared domain represents reference choices, commit summaries and merge state. The UI paints the graph with egui and uses the existing diff viewport.
 
 [Branches and History](BRANCHES_AND_HISTORY.md) · [ADR 0010](adr/0010-branches-history-and-merge.md)
+
+## Stage 06 remote operations
+
+Core defines the authentication choices, remote intents and sanitized outcomes. UI builds confirmations from workspace snapshots. App submits typed requests, publishes bounded progress, and refreshes the workspace after completion. Git owns transport policy, config and ref changes, and local pull integration. Storage retains the existing preferences and workspace history. Provider integrations remain reserved for a later stage. [ADR-0011](adr/0011-remote-operations.md)

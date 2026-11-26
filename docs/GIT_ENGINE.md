@@ -81,7 +81,7 @@ The 16 local integration tests passed with the system Git 2.56.1 and with Git 2.
 
 ## Stage 03 operations
 
-`Inspection::Workspace` returns HEAD and optional worktree status from one preflight. `Request::Create` prepares an unborn repository in a new directory. `Request::Clone` accepts a typed public HTTPS source and optional bounded progress observer. Both return a validated candidate for explicit session authorization. The engine can cancel before atomic publication and does not replace an existing destination. Clone and materialization use separate network and local policies respectively. [Repository management](REPOSITORY_MANAGEMENT.md)
+`Inspection::Workspace` returns HEAD and optional worktree status from one preflight. `Request::Create` prepares an unborn repository in a new directory. `Request::Clone` accepts a validated endpoint, explicit authentication and an optional bounded progress observer. Both return a validated candidate for explicit session authorization. The engine can cancel before atomic publication and does not replace an existing destination. Clone and materialization use separate network and local policies respectively. [Repository management](REPOSITORY_MANAGEMENT.md)
 
 
 ## Stage 04 mutations
@@ -98,3 +98,7 @@ Whole-file path lists are passed as NUL-framed literal operands. Partial changes
 Stage 05 adds immutable history anchors, parent and root comparisons, local reference mutations and single-source merges. The engine retains exclusive mutation access by common Git directory and reuses the preflight, process supervision, and signing policy.
 
 [Branches and History](BRANCHES_AND_HISTORY.md) · [ADR 0010](adr/0010-branches-history-and-merge.md)
+
+## Stage 06 remote operations
+
+`Inspection::Remotes` and `Inspection::WorkspaceNavigation` read the configuration and local tracking state. `Request::Remote` requires a matching snapshot and shares the common Git directory write guard with branch and index writes. Fetch uses an explicit tracking refspec and atomic ref updates. Push sends one immutable tip to a branch destination. Pull fetches and rechecks local metadata before integrating the fetched tip. Local merge and rebase subcommands run with network access denied. Transfers report a bounded phase/percentage stream and a sanitized terminal outcome. [Remote operations](REMOTE_OPERATIONS.md)

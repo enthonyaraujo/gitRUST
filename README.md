@@ -8,9 +8,9 @@ Inspired by the approachable workflow of [GitHub Desktop](https://github.com/des
 
 ## Current Project Status
 
-> **Current stage:** Stage 05 — Branches and History, local implementation under review (`v0.1.0-alpha.0`).
+> **Current stage:** Stage 06 — Remote Operations, local implementation under review (`v0.1.0-alpha.0`).
 
-Open and authorize a local repository, create a new one, or clone a public HTTPS source. The Changes workspace shows real staged and unstaged diffs, supports file and partial staging, and creates commits from the index. Reviewed discard, amend, and explicit commit signing are available. The application also supports local branches, commit history and basic merges. Settings provides Light, Dark and System themes, English and Brazilian Portuguese, and 100%–200% zoom.
+Open and authorize a local repository, create a new one, or clone over HTTPS or SSH. The Changes workspace shows real staged and unstaged diffs, supports file and partial staging, and creates commits from the index. Reviewed discard, amend, and explicit commit signing are available. The application also supports local branches, commit history and basic merges. The Remote selector manages remotes and upstreams and provides explicit fetch, pull, push and branch publication. [Remote operations](docs/REMOTE_OPERATIONS.md) Settings provides Light, Dark and System themes, English and Brazilian Portuguese, and 100%–200% zoom.
 
 Run `gitrust --diagnostics` to explore the component gallery. The [roadmap](docs/ROADMAP.md) describes the Linux-first MVP and the Stage 07 cross-platform release gate.
 
