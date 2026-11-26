@@ -1,5 +1,4 @@
 use std::{
-    ffi::OsString,
     fs, io,
     path::{Path, PathBuf},
 };
@@ -9,7 +8,7 @@ use crate::{
 };
 
 use super::{
-    Builtin, GitCommandSpec, GitError, ProcessLimits, Runner, TaskValue, checked, git_path, process,
+    Builtin, GitCommandSpec, GitError, ProcessLimits, Runner, TaskValue, checked, git_path,
 };
 
 #[derive(Clone, Copy)]
@@ -69,32 +68,11 @@ impl Runner<'_> {
     }
 
     fn clone_metadata(&self, working: &Path, request: &CloneRepository) -> Result<(), GitError> {
-        let mut args = [
-            "--no-pager",
-            "--no-optional-locks",
-            "--no-replace-objects",
-            "--no-lazy-fetch",
-            "-c",
-            "protocol.allow=never",
-            "-c",
-            "protocol.https.allow=always",
-            "-c",
-            "http.sslVerify=true",
-            "-c",
-            "http.followRedirects=false",
-            "-c",
-            "credential.helper=",
-            "-c",
-            "core.hooksPath=/dev/null",
-            "-c",
-            "core.attributesFile=/dev/null",
-            "-c",
-            "core.protectHFS=true",
-            "-c",
-            "core.protectNTFS=true",
-        ]
-        .map(OsString::from)
-        .to_vec();
+        let network = crate::transport::Network::prepare(
+            &request.source,
+            &request.auth,
+            request.bridge.as_deref(),
+        )?;
         let command = GitCommandSpec::new(Builtin::Clone)
             .args([
                 "--no-local",
@@ -107,29 +85,31 @@ impl Runner<'_> {
                 request.source.as_str(),
             ])
             .arg(git_path(working));
-        args.extend(command.args);
-        let cwd = self
-            .executable
-            .path()
-            .parent()
-            .ok_or(GitError::InvalidArgument("Git executable directory"))?;
         let limits = ProcessLimits {
             stdout: self.limits.stdout,
             stderr: self.limits.stderr.max(512 * 1024),
         };
-        let mut output = process::run_with_policy(
-            self.executable.path(),
-            cwd,
-            &args,
+        let output = self.run_policy(
+            None,
+            command,
             &[],
             limits,
-            self.control,
-            Policy::Clone(request.progress.as_ref()),
+            Policy::Network(&network, request.progress.as_ref()),
+            &network.options,
         )?;
-        // Git and the remote can echo the source URL or server messages.
-        output.stdout.clear();
-        output.stderr.clear();
-        checked(output, false)?;
+        if !output.status.success() && request.legacy {
+            let mut output = output;
+            output.stdout.clear();
+            output.stderr.clear();
+            checked(output, false)?;
+            return Ok(());
+        }
+        if !output.status.success() {
+            return Err(GitError::Remote(crate::transport::network_notice(
+                &output.stderr,
+                false,
+            )));
+        }
         Ok(())
     }
 }

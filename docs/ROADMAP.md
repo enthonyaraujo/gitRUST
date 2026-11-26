@@ -13,8 +13,8 @@ This document defines the staged engineering plan for **gitRUST**. Each stage ha
 | **02** | Git Engine | Completed and integrated | Yes |
 | **03** | Repository Management | Completed on Linux and integrated | Yes |
 | **04** | Changes and Commits | Completed on Linux and integrated | Yes |
-| **05** | Branches and History | Local implementation under review | Yes |
-| **06** | Remote Operations | Planned | Yes |
+| **05** | Branches and History | Integrated | Yes |
+| **06** | Remote Operations | Local implementation under review | Yes |
 | **07** | Cross-Platform Validation | Planned (release gate) | Yes |
 | **08** | Advanced Git Operations | Planned | Post-`v0.1.0` |
 | **09** | Provider Integrations | Planned | Post-`v0.1.0` |
@@ -56,12 +56,11 @@ This document defines the staged engineering plan for **gitRUST**. Each stage ha
 ### Stage 05 — Branches and History
 - Local and remote-tracking branch listing, creation, switching, renaming, and safe deletion.
 - Paginated/virtualized commit history list and commit detail inspector (changed files, author/committer metadata, parent links, diffs).
-- Basic merge workflows and clear conflict state detection. [Branches and History](BRANCHES_AND_HISTORY.md) · [ADR 0010](adr/0010-branches-history-and-merge.md)
+- Basic merge workflows and clear conflict state detection. [Branches and History](BRANCHES_AND_HISTORY.md) · [ADR 0010](adr/0010-branches-history-and-merge.md) · [PR #11](https://github.com/enthonyaraujo/gitRUST/pull/11)
 
 ### Stage 06 — Remote Operations
-- Remote configuration inspection (`origin` and additional remotes).
-- `fetch`, `pull` (merge/rebase respecting repository config), and `push` with non-blocking progress feedback.
-- Compatibility with system SSH agents and native Git credential helpers without storing plaintext credentials.
+- Manage remotes and upstreams and explicitly fetch, pull, publish or push.
+- HTTPS and SSH clone and authentication on Linux, with routed progress, cancellation and reviewed conflict recovery. [Remote operations](REMOTE_OPERATIONS.md) · [Authentication](AUTHENTICATION.md) · [ADR-0011](adr/0011-remote-operations.md)
 
 ---
 

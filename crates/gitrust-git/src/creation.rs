@@ -88,17 +88,16 @@ impl CloneSource {
                 .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b)))
         .then_some(name)
     }
-
-    pub(crate) fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
 }
 
-/// An explicitly requested public clone into a new directory.
+/// An explicitly requested clone into a new directory.
 #[derive(Clone, Debug)]
 pub struct CloneRepository {
     pub(crate) path: PathBuf,
-    pub(crate) source: CloneSource,
+    pub(crate) source: crate::RemoteEndpoint,
+    pub(crate) auth: gitrust_core::remotes::Auth,
+    pub(crate) bridge: Option<PathBuf>,
+    pub(crate) legacy: bool,
     pub(crate) progress: Option<mpsc::SyncSender<TransferProgress>>,
 }
 
@@ -108,10 +107,34 @@ impl CloneRepository {
     /// # Errors
     /// Rejects an invalid destination.
     pub fn new(path: PathBuf, source: CloneSource) -> Result<Self, GitError> {
+        let url: String = source.0.into();
+        let mut request = Self::remote(
+            path,
+            crate::RemoteEndpoint::new(&url)?,
+            gitrust_core::remotes::Auth::default(),
+            None,
+        )?;
+        request.legacy = true;
+        Ok(request)
+    }
+
+    /// Bind a validated endpoint and explicit authentication to an unused destination.
+    ///
+    /// # Errors
+    /// Rejects an invalid destination.
+    pub fn remote(
+        path: PathBuf,
+        source: crate::RemoteEndpoint,
+        auth: gitrust_core::remotes::Auth,
+        bridge: Option<PathBuf>,
+    ) -> Result<Self, GitError> {
         validate_destination(&path)?;
         Ok(Self {
             path,
             source,
+            auth,
+            bridge,
+            legacy: false,
             progress: None,
         })
     }

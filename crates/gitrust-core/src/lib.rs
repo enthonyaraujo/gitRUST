@@ -7,6 +7,7 @@
 
 pub mod changes;
 pub mod navigation;
+pub mod remotes;
 pub mod workspaces;
 
 /// Official user-facing product name.

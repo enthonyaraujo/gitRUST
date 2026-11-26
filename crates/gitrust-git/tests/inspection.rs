@@ -1706,3 +1706,7 @@ mod writes {
 
 #[path = "support/navigation.rs"]
 mod navigation;
+
+#[cfg(target_os = "linux")]
+#[path = "support/remotes.rs"]
+mod remotes;

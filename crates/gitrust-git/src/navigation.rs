@@ -108,13 +108,15 @@ pub struct NavigationResult {
     pub abort: Option<Arc<AbortProof>>,
 }
 
+pub(super) type WorktreeBytes = Vec<(PathBuf, Option<Vec<u8>>)>;
+
 /// The exact post-merge state checked again during abort.
 #[derive(Eq, PartialEq)]
 pub struct AbortProof {
     repository: crate::RepositoryCandidate,
     source: ObjectId,
     status: RepositoryStatus,
-    files: Vec<(PathBuf, Option<Vec<u8>>)>,
+    files: WorktreeBytes,
 }
 
 impl fmt::Debug for AbortProof {
@@ -361,20 +363,41 @@ impl Runner<'_> {
         tip: &RefTip,
         author: &CommitAuthor,
     ) -> Result<NavigationResult, GitError> {
-        let cwd = repo.repository().location();
         let HeadState::Attached(_, head) = &refs.head else {
             return Err(GitError::InvalidReference);
         };
         let tip = &local_tip(refs, tip)?.id;
+        self.merge_object(repo, width, head, tip, status, author, false)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn merge_object(
+        &mut self,
+        repo: &TrustedRepository,
+        width: usize,
+        head: &ObjectId,
+        tip: &ObjectId,
+        status: &RepositoryStatus,
+        author: &CommitAuthor,
+        fast_forward: bool,
+    ) -> Result<NavigationResult, GitError> {
+        let cwd = repo.repository().location();
+        validate_merge_files(repo)?;
+        repo.validate_reflogs(self.control)?;
         if self.ancestor(cwd, tip, head)? {
             return Ok(result(NavigationOutcome::Integrated));
+        }
+        if fast_forward && !self.ancestor(cwd, head, tip)? {
+            return Err(GitError::Remote(
+                gitrust_core::remotes::RemoteNotice::Diverged,
+            ));
         }
         if !status.entries.is_empty() {
             return Err(GitError::MergeDirty);
         }
         let identity = write::identity(author, None)?;
         let spec = GitCommandSpec::new(Builtin::Merge).args([
-            "--ff",
+            if fast_forward { "--ff-only" } else { "--ff" },
             "--no-commit",
             "--no-edit",
             "--no-gpg-sign",
@@ -455,9 +478,23 @@ impl Runner<'_> {
     ) -> Result<AbortProof, GitError> {
         let source = merge_source(repo, width)?.ok_or(GitError::StaleSnapshot)?;
         let status = self.worktree_status(repo, width, false)?;
+        let files = self.worktree_bytes(repo, &status)?;
+        Ok(AbortProof {
+            repository: repo.repository().clone(),
+            source,
+            status,
+            files,
+        })
+    }
+
+    pub(super) fn worktree_bytes(
+        &self,
+        repo: &TrustedRepository,
+        status: &RepositoryStatus,
+    ) -> Result<WorktreeBytes, GitError> {
         let mut remaining = 16 * 1024 * 1024u64;
         let mut files = Vec::new();
-        for path in change_rows(&status)?
+        for path in change_rows(status)?
             .into_iter()
             .map(|row| row.key.path)
             .collect::<BTreeSet<_>>()
@@ -488,15 +525,15 @@ impl Runner<'_> {
             self.control.check()?;
             files.push((path, bytes));
         }
-        Ok(AbortProof {
-            repository: repo.repository().clone(),
-            source,
-            status,
-            files,
-        })
+        Ok(files)
     }
 
-    fn ancestor(&self, cwd: &Path, old: &ObjectId, new: &ObjectId) -> Result<bool, GitError> {
+    pub(super) fn ancestor(
+        &self,
+        cwd: &Path,
+        old: &ObjectId,
+        new: &ObjectId,
+    ) -> Result<bool, GitError> {
         let out = self.run(
             Some(cwd),
             GitCommandSpec::new(Builtin::MergeBase).args([
@@ -515,7 +552,7 @@ impl Runner<'_> {
         }
     }
 
-    fn checked_local(
+    pub(super) fn checked_local(
         &self,
         cwd: &Path,
         command: GitCommandSpec,
@@ -570,7 +607,10 @@ fn head_id(head: &HeadState) -> Result<&ObjectId, GitError> {
     }
 }
 
-fn merge_source(repo: &TrustedRepository, width: usize) -> Result<Option<ObjectId>, GitError> {
+pub(super) fn merge_source(
+    repo: &TrustedRepository,
+    width: usize,
+) -> Result<Option<ObjectId>, GitError> {
     let path = repo.repository().git_dir().join("MERGE_HEAD");
     let meta = match fs::symlink_metadata(&path) {
         Ok(meta) if meta.is_file() && meta.len() <= 65 => meta,
@@ -626,7 +666,7 @@ fn validate_merge_files(repo: &TrustedRepository) -> Result<(), GitError> {
     Ok(())
 }
 
-fn incompatible(repo: &TrustedRepository) -> Result<bool, GitError> {
+pub(super) fn incompatible(repo: &TrustedRepository) -> Result<bool, GitError> {
     for name in [
         "CHERRY_PICK_HEAD",
         "REVERT_HEAD",

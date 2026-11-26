@@ -306,3 +306,7 @@ The coordinator prepares immutable diff row indexes on job completion. File and 
 History loads topological pages of 80 commits and bounds the view at 8,000 rows. Workers prepare graph lanes, while rendering visits only visible rows. Diff content is requested by selected file. Watches and completion notifications remain event-driven.
 
 [Branches and History](BRANCHES_AND_HISTORY.md) · [ADR 0010](adr/0010-branches-history-and-merge.md)
+
+## Stage 06 remote operations
+
+Transfers use the bounded Git worker pool. The supervisor reads only recognized progress records and publishes them through a bounded channel. Worker completion and workspace refresh use notifications. A workspace at rest performs no network polling or automatic fetch. The Linux idle CPU target remains below 1%. The transport tests exercise cancellation and timeout separately from rendering measurements.

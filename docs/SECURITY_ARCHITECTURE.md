@@ -76,7 +76,7 @@ flowchart LR
 **Controls:**
 - **Declarative Baseline Defined in Stage 00 (`gitrust-storage`, `gitrust-providers`), Runtime Enforcement Planned for Stages 03/06/08:** `StorageSecurityBaseline` and `TlsVerificationPolicy` codify the prohibition on plaintext credential files, default telemetry, and TLS verification bypasses as compile-time constants (`no HTTP/storage I/O exists in Stage 00`). `tracing` logs in `gitrust-app` record only non-sensitive metadata (version, OS, graphics adapter, viewport metrics) and never dump environment variables.
 - **Stage 03:** Accept only public HTTPS sources and reject URL user information. The local profile holds preferences and workspace paths.
-- **Planned for Stages 06 and 08:** Delegate transport credentials to approved Git credential helpers or SSH agents, and store provider tokens in the OS keychain (`Secret Service`, `Windows Credential Manager`, or `macOS Keychain`). Omit URL user information from diagnostic output.
+- **Stage 06:** Use approved Git credential helpers or OpenSSH with an existing agent on Linux. Reject embedded URL credentials and discard unfiltered network diagnostics. Provider credential storage remains a future integration.
 
 ### 3.4 Spoofing & Man-in-the-Middle (Transport Security)
 
@@ -108,7 +108,7 @@ flowchart LR
 
 The native application is a session trust coordinator. It stores no credentials, tokens or approval state in its profile. Local inspections preserve the validated-config allowlist, Git ownership checks and disabled network policy. The only LFS-related metadata accepted is the inert local repository-format marker with value zero. Filter configuration remains prohibited.
 
-The explicit clone request uses HTTPS with TLS verification, cleared environment, credential helpers disabled, and redirects refused. Git can contact only the configured HTTPS source for this operation. Initializing and cloning use empty templates, private staging, and no-replace publication. The local materializer enables HFS and NTFS protections and writes symlink contents as regular files. Network permissions do not carry over to validation or materialization. Checkout filters and nested submodules are not activated. The engine depends on a trusted executable and a stable caller-controlled destination parent. [ADR-0008](adr/0008-workspace-management.md)
+Stage 03 cloning used a cleared environment, public HTTPS with TLS verification, and blocked redirects. Stage 06 extends the boundary to explicitly authenticated HTTPS and SSH. Initializing and cloning use empty templates, private staging, and no-replace publication. The local materializer enables HFS and NTFS protections and writes symlink contents as regular files. Network permissions do not carry over to validation or materialization. Checkout filters and nested submodules are not activated. The engine depends on a trusted executable and a stable caller-controlled destination parent. [ADR-0008](adr/0008-workspace-management.md)
 
 URL credentials, queries and fragments are rejected at the input boundary. Clone failures expose the exit status and discard raw process streams. A successful clone retains the accepted source as Git's local origin, so submit only addresses intended to be retained. The app cannot recognize a secret encoded as an opaque URL path. The profile keeps no clone URL and the workspace view receives only an endpoint-presence flag.
 
@@ -131,3 +131,7 @@ Only explicit signing requests can select a verified system signing executable. 
 Branch changes use safe Git modes and revalidate full refs and expected commit IDs. Merge requires a clean start, protects ignored files and disables autostash and automatic conflict resolution. Only an in-session state proof permits abort.
 
 [Branches and History](BRANCHES_AND_HISTORY.md) · [ADR 0010](adr/0010-branches-history-and-merge.md)
+
+## Stage 06 transport boundary
+
+Git global and system config stay isolated. Repository configuration passes the local allowlist. The network request grants one protocol and sends a validated endpoint as a discrete argument. SSH verifies the host and only accepts the fixed Git upload or receive service with the approved repository path. It runs without user SSH command, proxy or startup config. Fetch validates its destination tracking namespace and rejects symbolic references targeting another namespace. Rename and removal refuse nonstandard fetch mappings. Push has a single non-forced branch destination. The subprocess supervisor bounds time and output. [ADR-0011](adr/0011-remote-operations.md) · [Authentication](AUTHENTICATION.md)

@@ -312,6 +312,10 @@ impl TrustedRepository {
         Ok(config)
     }
 
+    pub(crate) fn validate_rebase_metadata(&self, control: Control<'_>) -> Result<(), GitError> {
+        validate_tree(&self.0.git_dir.join("rebase-merge"), control)
+    }
+
     pub(crate) fn validate_worktrees(&self, control: Control<'_>) -> Result<(), GitError> {
         let worktrees = self.0.identity.common_dir().join("worktrees");
         if metadata(&worktrees)?.is_some() {
@@ -504,6 +508,8 @@ pub(crate) fn validate_config(bytes: &[u8]) -> Result<bool, GitError> {
             return Err(GitError::UnsupportedRepositoryFeature("partial clone"));
         }
         let safe = match key {
+            b"pull.rebase" => matches!(value, b"true" | b"false"),
+            b"pull.ff" => matches!(value, b"true" | b"false" | b"only"),
             b"core.repositoryformatversion" => matches!(value, b"0" | b"1"),
             b"lfs.repositoryformatversion" => value == b"0",
             b"extensions.objectformat" => matches!(value, b"sha1" | b"sha256"),

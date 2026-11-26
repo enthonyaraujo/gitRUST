@@ -33,7 +33,7 @@ pub(super) struct State {
     offset: Option<u32>,
     lanes: Vec<Option<String>>,
     tips: Arc<[ObjectId]>,
-    abort: Option<Arc<AbortProof>>,
+    pub(super) abort: Option<Arc<AbortProof>>,
     message: Option<NavigationNotice>,
 }
 
@@ -52,7 +52,7 @@ impl Coordinator {
         if switched {
             self.clear_navigation();
         }
-        self.read_navigation(trust, Inspection::Navigation, Read::Summary);
+        self.read_navigation(trust, Inspection::WorkspaceNavigation, Read::Summary);
     }
 
     fn read_navigation(&mut self, trust: TrustedRepository, inspection: Inspection, read: Read) {
@@ -201,8 +201,10 @@ impl Coordinator {
             return;
         }
         self.view.activity = Activity::Idle;
-        if let Ok(TaskValue::Navigation(summary)) = outcome {
-            self.update_summary(summary);
+        if let Ok(TaskValue::WorkspaceNavigation(summary)) = outcome {
+            let (navigation, remotes) = *summary;
+            self.update_summary(navigation);
+            self.update_remotes(remotes);
             return;
         }
         let Some(view) = &mut self.view.navigation else {
