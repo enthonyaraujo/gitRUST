@@ -3,7 +3,9 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use crate::{CloneRepository, CreateRepository, GitError, ObjectId, TrustedRepository};
+use gitrust_core::changes::ChangeKey;
+
+use crate::{CloneRepository, CreateRepository, GitError, Mutation, ObjectId, TrustedRepository};
 
 /// Future mutation classes are reserved for later stages.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -103,6 +105,12 @@ pub enum Inspection {
         /// Optional literal path filter.
         path: Option<RepoPath>,
     },
+    /// Exact patch bytes and typed hunks for one workspace file.
+    Change(ChangeKey),
+    /// Capture all paths and content for a discard review.
+    DiscardReview(Vec<ChangeKey>),
+    /// Local author and, for amend, the current message.
+    CommitDraft { amend: bool },
     /// A bounded page of commits rooted at HEAD.
     History(HistoryPage),
     /// Local and remote-tracking references.
@@ -120,6 +128,8 @@ pub enum Request {
     Create(CreateRepository),
     /// Clone explicitly from a public HTTPS source.
     Clone(CloneRepository),
+    /// Apply a typed operation to a revalidated workspace.
+    Mutate(TrustedRepository, Box<Mutation>),
 }
 
 impl Request {
@@ -129,11 +139,19 @@ impl Request {
         match self {
             Self::Identify(_) | Self::Inspect(..) => OperationSafetyClass::ReadOnly,
             Self::Create(_) | Self::Clone(_) => OperationSafetyClass::SerializedWrite,
+            Self::Mutate(_, operation) => operation.safety_class(),
         }
     }
 }
 
 pub(crate) enum Builtin {
+    Add,
+    Apply,
+    CommitTree,
+    Restore,
+    Rm,
+    UpdateRef,
+    WriteTree,
     CatFile,
     Clone,
     Init,
@@ -151,6 +169,13 @@ impl Builtin {
     const fn name(self) -> &'static str {
         match self {
             Self::CatFile => "cat-file",
+            Self::Add => "add",
+            Self::Apply => "apply",
+            Self::CommitTree => "commit-tree",
+            Self::Restore => "restore",
+            Self::Rm => "rm",
+            Self::UpdateRef => "update-ref",
+            Self::WriteTree => "write-tree",
             Self::Clone => "clone",
             Self::Init => "init",
             Self::ReadTree => "read-tree",

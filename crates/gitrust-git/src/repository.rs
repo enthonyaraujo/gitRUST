@@ -312,6 +312,20 @@ impl TrustedRepository {
         Ok(config)
     }
 
+    pub(crate) fn validate_reflogs(&self, control: Control<'_>) -> Result<(), GitError> {
+        let git_dir = self.0.git_dir();
+        let common = self.0.identity.common_dir();
+        for logs in [common, git_dir].into_iter().map(|dir| dir.join("logs")) {
+            if metadata(&logs)?.is_some() {
+                validate_tree(&logs, control)?;
+            }
+            if git_dir == common {
+                break;
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn head_reference(&self) -> Result<Option<ReferenceName>, GitError> {
         let bytes = control_file(&self.0.git_dir.join("HEAD"), POINTER_BYTES)?;
         let bytes = trim_file_eol(&bytes);

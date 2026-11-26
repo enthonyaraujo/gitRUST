@@ -48,6 +48,8 @@ pub(crate) const NULL_PATH: &str = "/dev/null";
 #[derive(Clone, Copy)]
 pub(crate) enum Policy<'a> {
     Local,
+    Index(&'a Path, &'a [(&'static str, OsString)]),
+    OpenPgp(&'a Path, &'a [(&'static str, OsString)]),
     Clone(Option<&'a mpsc::SyncSender<TransferProgress>>),
 }
 
@@ -85,6 +87,20 @@ fn command(
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_LITERAL_PATHSPECS", "1")
         .env("LC_ALL", "C");
+    if let Policy::Index(index, identity) | Policy::OpenPgp(index, identity) = policy {
+        cmd.env("GIT_INDEX_FILE", index);
+        for (key, value) in identity {
+            cmd.env(key, value);
+        }
+    }
+
+    if matches!(policy, Policy::OpenPgp(..))
+        && let Some(keyring) =
+            std::env::var_os("GNUPGHOME").filter(|dir| Path::new(dir).is_absolute())
+    {
+        cmd.env("GNUPGHOME", keyring);
+    }
+
     #[cfg(windows)]
     for key in ["SystemRoot", "WINDIR"] {
         if let Some(value) = std::env::var_os(key).filter(|v| Path::new(v).is_absolute()) {

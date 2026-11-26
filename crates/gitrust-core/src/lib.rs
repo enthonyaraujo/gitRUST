@@ -5,6 +5,7 @@
 //! only verified application metadata, runtime graphics/session diagnostics, and
 //! basic lifecycle events.
 
+pub mod changes;
 pub mod workspaces;
 
 /// Official user-facing product name.

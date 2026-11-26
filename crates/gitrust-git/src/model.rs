@@ -254,6 +254,12 @@ pub enum GitError {
     InvalidReference,
     /// Invalid public argument or executor option.
     InvalidArgument(&'static str),
+    /// Repository state no longer matches the approved snapshot.
+    StaleSnapshot,
+    /// A valid author identity is required.
+    AuthorRequired,
+    /// The approved signer cannot produce the required signature.
+    SigningFailed,
     /// A Git command returned a non-success status. Bytes are available for
     /// private diagnostics and the display representation omits them.
     CommandFailed(Box<ProcessOutput>),
@@ -307,6 +313,9 @@ impl fmt::Display for GitError {
             Self::PermissionDenied => f.write_str("permission denied"),
             Self::InvalidReference => f.write_str("invalid Git reference or object ID"),
             Self::InvalidArgument(name) => write!(f, "invalid argument: {name}"),
+            Self::StaleSnapshot => f.write_str("repository state changed since review"),
+            Self::AuthorRequired => f.write_str("a valid author name and email are required"),
+            Self::SigningFailed => f.write_str("commit signing did not succeed"),
             Self::CommandFailed(output) => write!(f, "Git command failed ({})", output.status),
             Self::SpawnFailed(error) => write!(f, "process or worker could not start: {error}"),
             Self::Timeout => f.write_str("Git operation timed out"),
