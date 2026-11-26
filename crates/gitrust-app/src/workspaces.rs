@@ -535,7 +535,7 @@ impl Coordinator {
 
     fn on_reply(&mut self, event: WorkerEvent) -> Option<PathBuf> {
         match event {
-            WorkerEvent::GithubCode(code) => self.view.github.prompt = Some(code),
+            WorkerEvent::GithubCode(code) => self.github_code(code),
             WorkerEvent::Github(result) => self.complete_github(*result),
             WorkerEvent::Complete(id) => self.complete(id),
             WorkerEvent::Folder(path, for_destination) => {

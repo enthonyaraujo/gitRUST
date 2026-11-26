@@ -6,7 +6,7 @@ The native GitHub workspace provides **Accounts**, **Repositories** and **Pull r
 
 New local profiles offer an optional GitHub.com sign-in. Continue without an account to open the local workspace immediately. This choice is stored locally and does not prevent connecting later from **Settings → GitHub Accounts**. Profiles with an existing repository catalog or GitHub configuration go directly to the workspace.
 
-Sign-in starts Device Flow and displays the code within gitRUST. Copy the code, open GitHub authorization in the system browser and approve the connection there. After authorization, gitRUST opens Accounts. Creating a GitHub.com account also opens the browser. A release can provide the public Client ID at build time. Builds without an ID show the setup field when sign-in is selected. GitHub Enterprise Server and other dedicated hosts are outside the current GitHub.com integration.
+Sign-in starts Device Flow. When GitHub issues the code, gitRUST displays it and opens GitHub authorization in the system default browser. Copy the code from gitRUST and approve the connection on GitHub. Use the authorization button to reopen the page if needed. After authorization, gitRUST opens Accounts. Creating a GitHub.com account also opens the browser. A release can provide the public Client ID at build time. Builds without an ID show the setup field when sign-in is selected. GitHub Enterprise Server and other dedicated hosts are outside the current GitHub.com integration.
 
 ## Workflows
 

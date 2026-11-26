@@ -5,11 +5,11 @@ use std::{
 
 use crossbeam_channel::Sender;
 use gitrust_core::{
-    github::{Action, Notice, RepositoryKey},
+    github::{Action, DevicePrompt, Notice, RepositoryKey, View},
     remotes::{RemoteAction, RemoteIntent, RemoteNotice},
     workspaces::Checkout,
 };
-use gitrust_providers::github::Cancellation;
+use gitrust_providers::github::{Cancellation, DEVICE_URL};
 use gitrust_storage::{GithubBindings, Store};
 
 use super::Coordinator;
@@ -73,6 +73,15 @@ impl Coordinator {
         self.github.worker.take();
     }
 
+    pub(super) fn github_code(&mut self, code: DevicePrompt) {
+        present_device_code(
+            &mut self.view.github,
+            self.github.cancellation.as_ref(),
+            code,
+            open_browser,
+        );
+    }
+
     pub(super) fn cancel_github(&mut self) {
         if let Some(cancel) = &self.github.cancellation {
             cancel.cancel();
@@ -129,11 +138,7 @@ impl Coordinator {
 
     pub(super) fn github_action(&mut self, action: Action) {
         match action {
-            Action::Open(url) => {
-                if gitrust_providers::github::browser_url_allowed(&url) {
-                    open_browser(&url);
-                }
-            }
+            Action::Open(url) => open_browser(&url),
             Action::Cancel => self.cancel_github(),
             Action::Bind(path, account) => self.bind_github(&path, account),
             Action::Restore(ref client) if client.is_empty() => {}
@@ -422,6 +427,18 @@ impl Coordinator {
     }
 }
 
+fn present_device_code(
+    view: &mut View,
+    pending: Option<&Cancellation>,
+    code: DevicePrompt,
+    launch: impl FnOnce(&str),
+) {
+    if view.busy && view.prompt.is_none() && pending.is_some_and(|cancel| cancel.check().is_ok()) {
+        view.prompt = Some(code);
+        launch(DEVICE_URL);
+    }
+}
+
 fn open_browser(url: &str) {
     #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     use std::process::{Command, Stdio};
@@ -460,5 +477,38 @@ fn open_browser(url: &str) {
         .spawn()
     {
         let _ = thread::Builder::new().spawn(move || child.wait());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opens_official_authorization_page_once_per_active_prompt() {
+        let code = DevicePrompt {
+            code: "ABCD-EFGH".into(),
+            expires_in: 300,
+        };
+        let mut view = View {
+            busy: true,
+            ..View::default()
+        };
+        let cancel = Cancellation::default();
+        let mut opens = 0;
+        present_device_code(&mut view, Some(&cancel), code.clone(), |url| {
+            assert_eq!(url, "https://github.com/login/device");
+            opens += 1;
+        });
+        assert_eq!(view.prompt.as_ref(), Some(&code));
+        present_device_code(&mut view, Some(&cancel), code.clone(), |_| opens += 1);
+        assert_eq!(opens, 1);
+
+        view.prompt = None;
+        cancel.cancel();
+        present_device_code(&mut view, Some(&cancel), code.clone(), |_| opens += 1);
+        present_device_code(&mut view, None, code, |_| opens += 1);
+        assert!(view.prompt.is_none());
+        assert_eq!(opens, 1);
     }
 }
