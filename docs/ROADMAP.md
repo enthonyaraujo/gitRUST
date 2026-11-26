@@ -10,7 +10,7 @@ This document defines the staged engineering plan for **gitRUST**. Each stage ha
 | --- | --- | --- | --- |
 | **00** | Project Foundation | Completed and integrated | Yes |
 | **01** | Design System | Completed | Yes |
-| **02** | Git Engine | Implemented on feature branch, pending review and multi-OS CI | Yes |
+| **02** | Git Engine | Completed and integrated | Yes |
 | **03** | Repository Management | Planned | Yes |
 | **04** | Changes and Commits | Planned | Yes |
 | **05** | Branches and History | Planned | Yes |
@@ -39,7 +39,7 @@ This document defines the staged engineering plan for **gitRUST**. Each stage ha
 - Local repository discovery, trust gating and typed, shell-free inspection with system Git 2.45 or newer.
 - Status, two-way diff, paged history and local/remote-tracking branches preserve byte-oriented paths and support SHA-1 and SHA-256.
 - Bounded background concurrency, write reservations by common Git directory, read cancellation, structured errors, temporary-repository tests and opt-in benchmarks.
-- [Git Engine contract](GIT_ENGINE.md)
+- Integrated into develop with the implementation commits preserved. [Git Engine contract and validation](GIT_ENGINE.md#stage-02-validation) · [PR #4](https://github.com/enthonyaraujo/gitRUST/pull/4)
 
 ### Stage 03 — Repository Management
 - Add existing local repositories, initialize new repositories (`git init`), and clone remote repositories (`git clone` with progress reporting).

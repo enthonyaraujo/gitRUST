@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed for Stage 02 review.
+Accepted in Stage 02. [Implementation PR](https://github.com/enthonyaraujo/gitRUST/pull/4)
 
 ## Context
 
