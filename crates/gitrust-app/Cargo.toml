@@ -19,11 +19,15 @@ gitrust-core.workspace = true
 gitrust-ui.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+gitrust-git.workspace = true
+gitrust-storage.workspace = true
+rfd = "0.18.0"
+notify = "9.0.0"
+crossbeam-channel = "0.5.15"
 
 [dev-dependencies]
-gitrust-git.workspace = true
 gitrust-providers.workspace = true
-gitrust-storage.workspace = true
+tempfile = "3.27.0"
 
 [lints]
 workspace = true

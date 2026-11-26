@@ -1,4 +1,7 @@
 mod dialogs;
+mod repositories;
+
+use repositories::{FormKind, ManagerUi};
 
 pub(crate) use dialogs::preferences;
 
@@ -182,6 +185,7 @@ pub struct Desktop {
     focus_search: bool,
     initial_popup: Option<DiagnosticView>,
     initial_compose_focus: Option<Id>,
+    managed: Option<ManagerUi>,
 }
 
 impl Desktop {
@@ -203,6 +207,7 @@ impl Desktop {
             focus_search: false,
             initial_popup: None,
             initial_compose_focus: None,
+            managed: None,
         };
         match options.diagnostics {
             Some(DiagnosticView::Gallery) => view.screen = Screen::Gallery,
@@ -326,12 +331,22 @@ impl Desktop {
             self.toolbar(ui, p, l, compact);
         }
         c::status_bar(ui, p, |ui| {
-            let status = if self.screen == Screen::Workspace {
-                Text::NoGit
+            let status = if let Some(managed) = &self.managed {
+                if !managed.view.git_available
+                    && managed.view.activity == gitrust_core::workspaces::Activity::Idle
+                {
+                    l.text(Text::NoGit)
+                } else if managed.view.active.is_some() {
+                    l.local("Local workspace", "Workspace local")
+                } else {
+                    l.text(Text::NoRepositoryShort)
+                }
+            } else if self.screen == Screen::Workspace {
+                l.text(Text::NoGit)
             } else {
-                Text::DemoHint
+                l.text(Text::DemoHint)
             };
-            c::status_indicator(ui, l.text(status), p.muted);
+            c::status_indicator(ui, status, p.muted);
             if !compact {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.label(
@@ -344,6 +359,9 @@ impl Desktop {
         });
         self.workspace(ui, p, l, compact);
         self.dialogs(ui, state, p, l);
+        if let Some(managed) = &mut self.managed {
+            managed.dialogs(ui, p, l);
+        }
         events
     }
 
@@ -386,8 +404,27 @@ impl Desktop {
     fn menu(&mut self, ui: &mut Ui, menu: Text, l: Language, events: &mut FrameEvents) {
         match menu {
             Text::File => {
-                unavailable(ui, l, Text::OpenRepo);
-                unavailable(ui, l, Text::Clone);
+                if let Some(managed) = &mut self.managed {
+                    for (label, kind) in [
+                        (l.text(Text::OpenRepo), FormKind::Open),
+                        (
+                            l.local("Create repository", "Criar repositório"),
+                            FormKind::Create,
+                        ),
+                        (l.text(Text::Clone), FormKind::Clone),
+                    ] {
+                        if ui
+                            .add_enabled(managed.usable(), Button::new(label))
+                            .clicked()
+                        {
+                            managed.open_form(kind);
+                            ui.close();
+                        }
+                    }
+                } else {
+                    unavailable(ui, l, Text::OpenRepo);
+                    unavailable(ui, l, Text::Clone);
+                }
                 ui.separator();
                 if ui.button(l.text(Text::Quit)).clicked() {
                     events.action = Some(AppEvent::RequestClose);
@@ -475,48 +512,63 @@ impl Desktop {
         }
     }
 
+    fn repository_button(
+        &mut self,
+        ui: &mut Ui,
+        p: Palette,
+        l: Language,
+        initial_popup: Option<DiagnosticView>,
+    ) {
+        let repository_name = self.managed.as_ref().map(|managed| managed.title(l));
+        let repository = c::context_button(
+            ui,
+            Icon::Repo,
+            l.text(Text::Repository),
+            if self.screen == Screen::Demo {
+                REPOSITORY
+            } else {
+                repository_name
+                    .as_deref()
+                    .unwrap_or(l.text(Text::NoRepositoryShort))
+            },
+            self.options.diagnostics.is_some() || self.managed.is_some(),
+            p,
+        );
+        if let Some(managed) = &mut self.managed {
+            egui::Popup::menu(&repository).show(|ui| managed.popup(ui, p, l));
+        } else if self.options.diagnostics.is_some() {
+            let popup = egui::Popup::menu(&repository);
+            let popup = if initial_popup == Some(DiagnosticView::Repository) {
+                popup.open_memory(Some(egui::SetOpenCommand::Bool(true)))
+            } else {
+                popup
+            };
+            popup.show(|ui| {
+                for (screen, label) in [
+                    (Screen::Workspace, Text::Workspace),
+                    (Screen::Demo, Text::DemoRepo),
+                    (Screen::Gallery, Text::Gallery),
+                ] {
+                    if c::menu_choice(ui, l.text(label), self.screen == screen, p).clicked() {
+                        if screen == Screen::Demo {
+                            self.open_demo();
+                        } else {
+                            self.screen = screen;
+                        }
+                        ui.close();
+                    }
+                }
+            });
+        }
+    }
+
     fn toolbar(&mut self, ui: &mut Ui, p: Palette, l: Language, compact: bool) {
         let initial_popup = self.initial_popup.take();
         c::toolbar(ui, p, |ui| {
             Icon::Mark.show(ui, 23.0, p.accent);
             ui.label(RichText::new("gitRUST").family(weight()).size(19.0));
             ui.separator();
-            let repository = c::context_button(
-                ui,
-                Icon::Repo,
-                l.text(Text::Repository),
-                if self.screen == Screen::Demo {
-                    REPOSITORY
-                } else {
-                    l.text(Text::NoRepositoryShort)
-                },
-                self.options.diagnostics.is_some(),
-                p,
-            );
-            if self.options.diagnostics.is_some() {
-                let popup = egui::Popup::menu(&repository);
-                let popup = if initial_popup == Some(DiagnosticView::Repository) {
-                    popup.open_memory(Some(egui::SetOpenCommand::Bool(true)))
-                } else {
-                    popup
-                };
-                popup.show(|ui| {
-                    for (screen, label) in [
-                        (Screen::Workspace, Text::Workspace),
-                        (Screen::Demo, Text::DemoRepo),
-                        (Screen::Gallery, Text::Gallery),
-                    ] {
-                        if c::menu_choice(ui, l.text(label), self.screen == screen, p).clicked() {
-                            if screen == Screen::Demo {
-                                self.open_demo();
-                            } else {
-                                self.screen = screen;
-                            }
-                            ui.close();
-                        }
-                    }
-                });
-            }
+            self.repository_button(ui, p, l, initial_popup);
             let branch = self
                 .demo
                 .as_ref()
@@ -524,14 +576,26 @@ impl Desktop {
                 .map(|demo| demo.branch);
             if !compact || (branch.is_some() && ui.available_width() > 156.0) {
                 ui.separator();
-                let response = c::context_button(
-                    ui,
-                    Icon::Branch,
-                    l.text(Text::Branch),
-                    branch.map_or(l.text(Text::NoBranch), |i| BRANCHES[i]),
-                    branch.is_some(),
-                    p,
-                );
+                let response =
+                    c::context_button(
+                        ui,
+                        Icon::Branch,
+                        l.text(Text::Branch),
+                        branch.map_or_else(
+                            || {
+                                self.managed.as_ref()
+                        .and_then(|managed| managed.view.active.as_ref())
+                        .map_or(l.text(Text::NoBranch), |active| match &active.checkout {
+                            gitrust_core::workspaces::Checkout::Branch(name) |
+                            gitrust_core::workspaces::Checkout::Unborn(name) |
+                            gitrust_core::workspaces::Checkout::Detached(name) => name.as_str(),
+                        })
+                            },
+                            |i| BRANCHES[i],
+                        ),
+                        branch.is_some(),
+                        p,
+                    );
                 if let Some(branch) = branch {
                     let popup = egui::Popup::menu(&response);
                     let popup = if initial_popup == Some(DiagnosticView::Branch) {
@@ -551,11 +615,20 @@ impl Desktop {
             }
             if !compact && ui.available_width() > 212.0 {
                 ui.separator();
+                let remote = self
+                    .managed
+                    .as_ref()
+                    .and_then(|managed| managed.view.active.as_ref());
+                let remote_status = match remote.map(|workspace| workspace.has_remote) {
+                    Some(false) => l.local("None configured", "Nenhum configurado"),
+                    Some(true) => l.local("Actions unavailable", "Ações indisponíveis"),
+                    None => l.text(Text::Unavailable),
+                };
                 c::context_button(
                     ui,
                     Icon::Remote,
                     l.text(Text::Remote),
-                    l.text(Text::Unavailable),
+                    remote_status,
                     false,
                     p,
                 );
@@ -591,7 +664,13 @@ impl Desktop {
         CentralPanel::default()
             .frame(c::panel(p.background, padding))
             .show(ui, |ui| match self.screen {
-                Screen::Workspace => self.empty_workspace(ui, p, l),
+                Screen::Workspace => {
+                    if let Some(managed) = &mut self.managed {
+                        managed.workspace(ui, p, l);
+                    } else {
+                        self.empty_workspace(ui, p, l);
+                    }
+                }
                 Screen::Demo if compact && !self.compact_detail => self.sidebar(ui, p, l, true),
                 Screen::Demo => self.details(ui, p, l, compact),
                 Screen::Gallery => {}
