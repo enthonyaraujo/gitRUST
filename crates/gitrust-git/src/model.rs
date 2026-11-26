@@ -285,6 +285,8 @@ pub enum GitError {
     BranchSwitchBlocked,
     /// A merge requires a clean index and working tree.
     MergeDirty,
+    /// Sanitized transport outcome.
+    Remote(gitrust_core::remotes::RemoteNotice),
     /// The repository uses a feature outside the Stage 02 policy.
     UnsupportedRepositoryFeature(&'static str),
     /// The metadata violates the local-only inspection policy.
@@ -339,6 +341,7 @@ impl fmt::Display for GitError {
             Self::BranchSwitchBlocked => {
                 f.write_str("Git prevented a checkout to preserve local state")
             }
+            Self::Remote(notice) => write!(f, "remote operation: {notice:?}"),
             Self::MergeDirty => f.write_str("Merge requires a clean index and working tree"),
             Self::UnsupportedRepositoryFeature(feature) => {
                 write!(f, "unsupported repository feature: {feature}")

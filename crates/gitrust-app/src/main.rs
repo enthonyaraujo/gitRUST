@@ -512,6 +512,9 @@ fn build_native_options(initial_size_override: Option<[f32; 2]>) -> eframe::Nati
 }
 
 fn main() -> ExitCode {
+    if let Some(code) = gitrust_git::ssh_bridge() {
+        return code;
+    }
     let metadata = AppMetadata::new(CARGO_VERSION);
 
     let mode = match parse_launch_mode(std::env::args_os()) {

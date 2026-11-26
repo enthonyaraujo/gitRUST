@@ -51,7 +51,10 @@ pub(crate) enum Policy<'a> {
     Author(&'a [(&'static str, OsString)], bool),
     Index(&'a Path, &'a [(&'static str, OsString)]),
     OpenPgp(&'a Path, &'a [(&'static str, OsString)]),
-    Clone(Option<&'a mpsc::SyncSender<TransferProgress>>),
+    Network(
+        &'a crate::transport::Network,
+        Option<&'a mpsc::SyncSender<TransferProgress>>,
+    ),
 }
 
 fn command(
@@ -78,8 +81,8 @@ fn command(
         .env("GIT_OPTIONAL_LOCKS", "0")
         .env(
             "GIT_ALLOW_PROTOCOL",
-            if matches!(policy, Policy::Clone(_)) {
-                "https"
+            if let Policy::Network(network, _) = policy {
+                network.protocol
             } else {
                 ""
             },
@@ -107,6 +110,11 @@ fn command(
         cmd.env("GNUPGHOME", keyring);
     }
 
+    if let Policy::Network(network, _) = policy {
+        for (key, value) in &network.env {
+            cmd.env(key, value);
+        }
+    }
     #[cfg(windows)]
     for key in ["SystemRoot", "WINDIR"] {
         if let Some(value) = std::env::var_os(key).filter(|v| Path::new(v).is_absolute()) {
@@ -136,7 +144,7 @@ fn progress_line(mut line: &[u8]) -> Option<TransferProgress> {
     let phase = match kind {
         b"Counting objects" => TransferPhase::Counting,
         b"Compressing objects" => TransferPhase::Compressing,
-        b"Receiving objects" => TransferPhase::Receiving,
+        b"Receiving objects" | b"Writing objects" => TransferPhase::Receiving,
         b"Resolving deltas" => TransferPhase::Resolving,
         _ => return None,
     };
@@ -297,7 +305,7 @@ pub(crate) fn run_with_policy(
                 .name("gitrust-stderr".into())
                 .spawn_scoped(scope, move || {
                     let result = match policy {
-                        Policy::Clone(Some(observer)) => {
+                        Policy::Network(_, Some(observer)) => {
                             collect_progress(stderr, limits.stderr, observer)
                         }
                         _ => collect(stderr, limits.stderr, OutputStream::Stderr),

@@ -11,6 +11,7 @@ mod mutation;
 mod process;
 mod repository;
 mod status;
+mod transport;
 
 pub use command::{DiffTarget, HistoryPage, Inspection, OperationSafetyClass, RepoPath, Request};
 pub use creation::{CloneRepository, CloneSource, CreateRepository};
@@ -28,6 +29,7 @@ pub use model::{
 pub use mutation::{ChangePatch, Mutation, MutationAction, change_rows};
 pub use repository::{RepositoryCandidate, RepositoryIdentity, RepositoryInfo, TrustedRepository};
 pub use status::{BranchStatus, EntryKind, RepositoryStatus, StatusEntry, SubmoduleState};
+pub use transport::{RemoteEndpoint, ssh_bridge};
 
 /// Stage in which this crate becomes functional.
 pub const STAGE_STATUS: gitrust_core::CrateStageStatus =
