@@ -31,7 +31,7 @@ Hardware-accelerated desktop applications using Vulkan (`wgpu`), Metal, or Direc
 
 ## 2. Anti-Premature-Optimization Policy
 
-- **Stability and diagnostics come first:** Stage 00 uses standard Cargo `release` defaults (`panic = "unwind"`, unstripped symbol tables until Stage 11 packaging) so crash backtraces and profiling tools (`perf`, `samply`, `heaptrack`) remain accurate.
+- **Stability and diagnostics come first:** Stage 00 uses standard Cargo `release` defaults (`panic = "unwind"`, unstripped symbol tables until Stage 12 packaging) so crash backtraces and profiling tools (`perf`, `samply`, `heaptrack`) remain accurate.
 - **Architectural efficiency over micro-tricks:** Zero idle CPU is achieved structurally through event-driven `egui`/`eframe` rendering (`ControlFlow::Wait`), zero per-frame static string allocations (`FoundationView` label caching), and defaulting `wgpu` to `PowerPreference::LowPower` (overridable via `WGPU_POWER_PREF=high`).
 
 ---
@@ -310,3 +310,7 @@ History loads topological pages of 80 commits and bounds the view at 8,000 rows.
 ## Stage 06 remote operations
 
 Transfers use the bounded Git worker pool. The supervisor reads only recognized progress records and publishes them through a bounded channel. Worker completion and workspace refresh use notifications. A workspace at rest performs no network polling or automatic fetch. The Linux idle CPU target remains below 1%. The transport tests exercise cancellation and timeout separately from rendering measurements.
+
+## Stage 07 GitHub integration
+
+The provider worker sleeps when idle. Device Flow polls only during authorization and follows the server interval. Repository and PR lists are paginated, rendering is virtualized, and CI queries run on demand. API bodies and decoded avatars have independent size limits.

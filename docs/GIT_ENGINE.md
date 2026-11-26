@@ -102,3 +102,7 @@ Stage 05 adds immutable history anchors, parent and root comparisons, local refe
 ## Stage 06 remote operations
 
 `Inspection::Remotes` and `Inspection::WorkspaceNavigation` read the configuration and local tracking state. `Request::Remote` requires a matching snapshot and shares the common Git directory write guard with branch and index writes. Fetch uses an explicit tracking refspec and atomic ref updates. Push sends one immutable tip to a branch destination. Pull fetches and rechecks local metadata before integrating the fetched tip. Local merge and rebase subcommands run with network access denied. Transfers report a bounded phase/percentage stream and a sanitized terminal outcome. [Remote operations](REMOTE_OPERATIONS.md)
+
+## Stage 07 provider handoff
+
+The coordinator resolves linked credentials after an explicit request. The engine validates the exact HTTPS endpoint before preparing the header. It also accepts a reviewed publication request or a commit-pinned checkout request and reuses the Stage 06 process supervisor.

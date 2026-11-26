@@ -74,7 +74,7 @@ flowchart LR
 **Threat:** Personal access tokens, passwords, SSH passphrases, or private URLs with embedded credentials leak into config files, crash reports, or terminal logs.
 
 **Controls:**
-- **Declarative Baseline Defined in Stage 00 (`gitrust-storage`, `gitrust-providers`), Runtime Enforcement Planned for Stages 03/06/08:** `StorageSecurityBaseline` and `TlsVerificationPolicy` codify the prohibition on plaintext credential files, default telemetry, and TLS verification bypasses as compile-time constants (`no HTTP/storage I/O exists in Stage 00`). `tracing` logs in `gitrust-app` record only non-sensitive metadata (version, OS, graphics adapter, viewport metrics) and never dump environment variables.
+- **Declarative Baseline Defined in Stage 00 (`gitrust-storage`, `gitrust-providers`), Runtime Enforcement in Stages 03/06/07:** `StorageSecurityBaseline` and `TlsVerificationPolicy` codify the prohibition on plaintext credential files, default telemetry, and TLS verification bypasses as compile-time constants (`no HTTP/storage I/O exists in Stage 00`). `tracing` logs in `gitrust-app` record only non-sensitive metadata (version, OS, graphics adapter, viewport metrics) and never dump environment variables.
 - **Stage 03:** Accept only public HTTPS sources and reject URL user information. The local profile holds preferences and workspace paths.
 - **Stage 06:** Use approved Git credential helpers or OpenSSH with an existing agent on Linux. Reject embedded URL credentials and discard unfiltered network diagnostics. Provider credential storage remains a future integration.
 
@@ -135,3 +135,7 @@ Branch changes use safe Git modes and revalidate full refs and expected commit I
 ## Stage 06 transport boundary
 
 Git global and system config stay isolated. Repository configuration passes the local allowlist. The network request grants one protocol and sends a validated endpoint as a discrete argument. SSH verifies the host and only accepts the fixed Git upload or receive service with the approved repository path. It runs without user SSH command, proxy or startup config. Fetch validates its destination tracking namespace and rejects symbolic references targeting another namespace. Rename and removal refuse nonstandard fetch mappings. Push has a single non-forced branch destination. The subprocess supervisor bounds time and output. [ADR-0011](adr/0011-remote-operations.md) · [Authentication](AUTHENTICATION.md)
+
+## Stage 07 GitHub integration
+
+The public Client ID identifies the registered GitHub App. Device Flow, strict TLS and encrypted Linux Secret Service protect session material. Tokens are scoped by account, refreshed on explicit use, and omitted from the workspace profile. Git receives a bearer-derived Basic header only for its reviewed HTTPS repository URL; GitHub REST uses a Bearer header only on the API origin. [Authentication](GITHUB_AUTHENTICATION.md)

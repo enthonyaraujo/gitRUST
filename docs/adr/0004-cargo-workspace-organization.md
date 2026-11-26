@@ -23,7 +23,7 @@ Crates under `crates/`:
 - `gitrust-ui`: `egui` views and future Stage 01 Design System (`egui` + `gitrust-core`).
 - `gitrust-git`: Git engine boundary (`std` + `gitrust-core` in Stage 00; full engine in Stage 02).
 - `gitrust-storage`: local persistence and secret-storage policy boundary (Stage 03 target).
-- `gitrust-providers`: hosting provider integration boundary (Stage 09 target).
+- `gitrust-providers`: hosting provider integration boundary (GitHub in Stage 07, additional providers in Stage 10).
 - `gitrust-app`: binary entrypoint (`gitrust`) integrating `eframe`, `wgpu`, logging, and workspace crates.
 
 - **Pros:** Compiler-verified DAG; `gitrust-core`, `gitrust-git`, `gitrust-storage`, and `gitrust-providers` compile and test in milliseconds without touching GPU crates; `gitrust-ui` tests headlessly without `eframe`/`winit`; shared `[workspace.dependencies]` and `[workspace.lints]` eliminate configuration drift.

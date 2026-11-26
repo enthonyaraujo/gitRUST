@@ -22,7 +22,7 @@ git --version
 
 ## 2. Platform System Dependencies
 
-During Stages 04–06, Linux is the development and automatic CI target. The Windows and macOS build definitions remain available for manual workflow dispatch through the deferred-platform option. Native tests, graphics validation, and compatibility fixes across all three platforms resume in Stage 07.
+During Stages 04–07, Linux is the development and automatic CI target. The Windows and macOS build definitions remain available for manual workflow dispatch through the deferred-platform option. Native tests, graphics validation, and compatibility fixes across all three platforms resume in Stage 08.
 
 ### Linux (First-Class Platform: Wayland & X11)
 
@@ -149,7 +149,7 @@ For the minimum-version check use an isolated Git 2.45.0 build with its matching
 
 ### Stage 04 verification
 
-On Linux, run the locked stable and MSRV checks and tests, Clippy, the release build, and the dependency audit. The Git integration fixtures use disposable repositories and can be rerun with Git 2.45.0 first on `PATH`. Use the built native desktop app against another disposable repository to verify staging, partial operations, commits, amend and reviewed discard. OpenPGP and SSH signing use system tools only when selected. Automatic Windows and macOS CI jobs are suspended during Stages 04–06 and remain available through manual workflow dispatch.
+On Linux, run the locked stable and MSRV checks and tests, Clippy, the release build, and the dependency audit. The Git integration fixtures use disposable repositories and can be rerun with Git 2.45.0 first on `PATH`. Use the built native desktop app against another disposable repository to verify staging, partial operations, commits, amend and reviewed discard. OpenPGP and SSH signing use system tools only when selected. Automatic Windows and macOS CI jobs are suspended during Stages 04–07 and remain available through manual workflow dispatch.
 
 [Changes and Commits](CHANGES_AND_COMMITS.md) · [Cross-platform validation](ROADMAP.md#stage-07--cross-platform-validation)
 
@@ -162,4 +162,8 @@ cargo test --locked -p gitrust-git --test inspection remotes:: -- --nocapture
 cargo test --locked -p gitrust-app --test remote_ssh -- --nocapture
 ```
 
-Fixtures report missing prerequisites on standard error. To validate the Git 2.45.0 floor, prepend an installed Git 2.45.0 with its matching transport helpers to the test command's `PATH`. The OpenSSH and Secret Service integration paths are Linux-first. Stage 07 covers platform trust stores, helper discovery, the SSH client path and native GUI validation on Windows and macOS.
+Fixtures report missing prerequisites on standard error. To validate the Git 2.45.0 floor, prepend an installed Git 2.45.0 with its matching transport helpers to the test command's `PATH`. The OpenSSH and Secret Service integration paths are Linux-first. Stage 08 covers platform trust stores, helper discovery, the SSH client path and native GUI validation on Windows and macOS.
+
+## Stage 07 GitHub fixtures
+
+Run `cargo test --locked -p gitrust-providers` for deterministic HTTPS policy and REST contract tests using controlled loopback responses. The Linux vault integration test is opt-in and requires an isolated Secret Service session. A live Device Flow requires the owner's [GitHub App](GITHUB_APP_SETUP.md).

@@ -8,11 +8,11 @@ Inspired by the approachable workflow of [GitHub Desktop](https://github.com/des
 
 ## Current Project Status
 
-> **Current stage:** Stage 06 — Remote Operations, local implementation under review (`v0.1.0-alpha.0`).
+> **Current stage:** Stage 07 — GitHub Integration, local implementation under review (`v0.1.0-alpha.0`).
 
-Open and authorize a local repository, create a new one, or clone over HTTPS or SSH. The Changes workspace shows real staged and unstaged diffs, supports file and partial staging, and creates commits from the index. Reviewed discard, amend, and explicit commit signing are available. The application also supports local branches, commit history and basic merges. The Remote selector manages remotes and upstreams and provides explicit fetch, pull, push and branch publication. [Remote operations](docs/REMOTE_OPERATIONS.md) Settings provides Light, Dark and System themes, English and Brazilian Portuguese, and 100%–200% zoom.
+Open and authorize a local repository, create a new one, or clone over HTTPS or SSH. The Changes workspace shows real staged and unstaged diffs, supports file and partial staging, and creates commits from the index. Reviewed discard, amend, and explicit commit signing are available. The application also supports local branches, commit history and basic merges. The Remote selector manages remotes and upstreams and provides explicit fetch, pull, push and branch publication. [Remote operations](docs/REMOTE_OPERATIONS.md) · [GitHub integration](docs/GITHUB_INTEGRATION.md) Settings provides Light, Dark and System themes, English and Brazilian Portuguese, and 100%–200% zoom.
 
-Run `gitrust --diagnostics` to explore the component gallery. The [roadmap](docs/ROADMAP.md) describes the Linux-first MVP and the Stage 07 cross-platform release gate.
+Run `gitrust --diagnostics` to explore the component gallery. The [roadmap](docs/ROADMAP.md) describes the Linux-first MVP and the Stage 08 cross-platform release gate.
 
 ---
 
@@ -36,7 +36,7 @@ gitRUST/
 │   ├── gitrust-ui/         # Native egui shell, design tokens, diff views, and diagnostics
 │   ├── gitrust-git/        # Shell-free Git command spec boundary (Stage 02 target)
 │   ├── gitrust-storage/    # Storage & OS keychain policy boundary (Stage 03 target)
-│   └── gitrust-providers/  # Hosting provider security boundary (Stage 09 target)
+│   └── gitrust-providers/  # GitHub API and provider boundary
 ├── docs/                   # Architecture, roadmap, build, security, performance, and ADRs
 ├── .github/                # Multi-platform CI workflows and issue templates
 ├── Cargo.toml              # Workspace manifest, shared dependencies, and strict lints

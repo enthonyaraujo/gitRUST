@@ -17,6 +17,7 @@ This directory records significant architectural decisions made in **gitRUST**, 
 | [ADR-0009](0009-local-changes-and-commits.md) | Local changes and commits | Accepted | 04 |
 | [ADR-0010](0010-branches-history-and-merge.md) | Branches, history, and merge | Proposed | 05 |
 | [ADR-0011](0011-remote-operations.md) | Explicit network operations and authentication | Proposed | 06 |
+| [ADR-0012](0012-github-integration.md) | Native GitHub App integration | Proposed | 07 |
 
 ## Lifecycle States
 

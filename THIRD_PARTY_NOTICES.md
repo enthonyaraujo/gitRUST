@@ -78,3 +78,7 @@ Local mutations add no Cargo dependencies or bundled assets. Git remains a separ
 ## Remote operations
 
 Stage 06 adds no Cargo dependencies. HTTPS and smart Git are supplied by the installed Git executable and its transport helper. SSH uses the installed OpenSSH client. Git's credential cache and an installed Git Secret Service helper are opt-in runtime tools. These programs are invoked from the system and are not redistributed with the application. Python 3, OpenSSL and the OpenSSH server are used only by the Linux loopback test fixtures.
+
+## GitHub integration
+
+`ureq` and its rustls stack supply native HTTPS transport with `rustls-native-certs` for system trust roots, `serde` and `serde_json` decode wire and vault records, and `secret-service` supplies encrypted Linux desktop vault I/O. The application uses the workspace's existing `image` PNG decoder for bounded avatar images.

@@ -12,7 +12,7 @@
 
 ## Consequences
 
-Git and the filesystem supply their own lock guarantees. Worktree contents and references can change between separate operations by an independent process. The application refreshes after each terminal mutation, including cancellation and failure. The local boundary depends on user-controlled repository metadata. Cross-platform application validation stays in Stage 07.
+Git and the filesystem supply their own lock guarantees. Worktree contents and references can change between separate operations by an independent process. The application refreshes after each terminal mutation, including cancellation and failure. The local boundary depends on user-controlled repository metadata. Cross-platform application validation stays in Stage 08.
 
 - [Git switch](https://git-scm.com/docs/git-switch)
 - [Git merge](https://git-scm.com/docs/git-merge)

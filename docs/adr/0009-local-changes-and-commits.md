@@ -20,7 +20,7 @@ Workspace status represents two Git comparisons, and a single path can appear in
 
 Index publication and branch compare-and-swap rely on Git's and the filesystem's individual guarantees. Index, refs and worktree are separate resources. An interruption during a multi-file restore can leave some files changed, and a failed commit can leave unreachable Git objects. The coordinator inspects the real state after mutations. Directory checks and content revalidation reduce race windows with concurrent editors. The trust model requires the user to control write access to local metadata. Abrupt or adversarial external replacements cannot be treated as a supported concurrent transaction.
 
-The release contract targets Linux for Stage 04. Portable abstractions remain in place, while native compatibility and filesystem behaviors on Windows and macOS remain Stage 07 work.
+The release contract targets Linux for Stage 04. Portable abstractions remain in place, while native compatibility and filesystem behaviors on Windows and macOS remain Stage 08 work.
 
 ## References
 
