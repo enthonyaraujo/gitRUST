@@ -12,7 +12,7 @@ This document defines the staged engineering plan for **gitRUST**. Each stage ha
 | **01** | Design System | Completed | Yes |
 | **02** | Git Engine | Completed and integrated | Yes |
 | **03** | Repository Management | Completed on Linux and integrated | Yes |
-| **04** | Changes and Commits | Planned | Yes |
+| **04** | Changes and Commits | Local implementation under review | Yes |
 | **05** | Branches and History | Planned | Yes |
 | **06** | Remote Operations | Planned | Yes |
 | **07** | Cross-Platform Validation | Planned (release gate) | Yes |
@@ -51,7 +51,7 @@ This document defines the staged engineering plan for **gitRUST**. Each stage ha
 ### Stage 04 — Changes and Commits
 - Working tree and index inspection (staged, unstaged, untracked, conflicted, and renamed files).
 - Unified and split diff viewer with virtualized rendering for large diffs and binary file indicators.
-- File-level and hunk/line-level staging/unstaging, discard changes (with explicit destructive-action confirmation), commit authoring, amend support, and commit signature compatibility.
+- File-level and hunk/line-level staging and unstaging, reviewed discard, commit authoring, amend, and explicit OpenPGP and SSH signing. [Changes and Commits](CHANGES_AND_COMMITS.md) · [ADR 0009](adr/0009-local-changes-and-commits.md)
 
 ### Stage 05 — Branches and History
 - Local and remote-tracking branch listing, creation, switching, renaming, and safe deletion.

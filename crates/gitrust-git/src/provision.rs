@@ -64,7 +64,7 @@ impl Runner<'_> {
         self.control.check()?;
         publish(&working, &destination)?;
         Ok(TaskValue::Provisioned(
-            RepositoryCandidate::published_worktree(destination),
+            prepared.repository().published_worktree(destination),
         ))
     }
 

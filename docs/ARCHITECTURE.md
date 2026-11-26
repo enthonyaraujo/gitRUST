@@ -43,8 +43,8 @@ flowchart TD
 | --- | --- | --- | --- |
 | `gitrust-core` | **Implemented** | Pure domain models, workspace actions and snapshots, runtime diagnostics, and the deterministic `AppEvent` reducer. | None (`std` only) |
 | `gitrust-ui` | **Implemented** | Native `egui` shell and design system decoupled from OS windowing and headlessly testable via `egui::Context`. | `gitrust-core`, `egui` |
-| `gitrust-app` | **Stage 03 implementation** | Native entrypoint, workspace coordinator, dialogs and watcher lifecycle. | `gitrust-core`, `gitrust-git`, `gitrust-storage`, `gitrust-ui`, `eframe`, `egui`, `rfd`, `notify`, `crossbeam-channel`, `tracing`, `tracing-subscriber` |
-| `gitrust-git` | **Stage 03 implementation** | Typed Git discovery, local inspection, init and public HTTPS clone. Owns scheduling, subprocess policy and byte-oriented parsing. | `gitrust-core`, `process-wrap`, `tempfile`, `url`, `rustix` (Linux/macOS) |
+| `gitrust-app` | **Stage 04 implementation** | Native entrypoint, workspace coordinator, dialogs, watcher lifecycle and reconciliation of changes and commits. | `gitrust-core`, `gitrust-git`, `gitrust-storage`, `gitrust-ui`, `eframe`, `egui`, `rfd`, `notify`, `crossbeam-channel`, `tracing`, `tracing-subscriber` |
+| `gitrust-git` | **Stage 04 implementation** | Typed Git discovery, inspection, init, public HTTPS clone and local mutations. Owns scheduling, subprocess policy and byte-oriented parsing. | `gitrust-core`, `process-wrap`, `tempfile`, `url`, `rustix` (Linux/macOS) |
 | `gitrust-storage` | **Stage 03 implementation** | Versioned preferences and workspace catalog, with native local paths and atomic file replacement. | `gitrust-core`, `directories`, `tempfile` |
 | `gitrust-providers` | **Boundary Only (Planned Stage 09)** | Strict TLS policy contract. GitHub, GitLab, and hosting API clients scheduled for **Stage 09**. | None (`std` only) |
 
@@ -79,3 +79,10 @@ The canonical common Git directory is the scheduler identity for a working tree 
 ## 5. Workspace coordination (Stage 03)
 
 The shell sends the repository actions defined in gitrust-core to an application-owned coordinator. The coordinator resolves preferences, invokes the typed Git Engine, handles native folder selection, and owns cancellation and refresh. Only immutable presentation data returns to egui. The engine and storage remain independent of the UI. [Repository management](REPOSITORY_MANAGEMENT.md) · [ADR-0008](adr/0008-workspace-management.md)
+
+
+## 6. Changes and commits (Stage 04)
+
+`gitrust-core` defines file/layer identity, immutable display projections and versioned intents. `gitrust-ui` renders the actual Changes workspace and sends intents. `gitrust-app` retains the opaque patch and pending approval on the workspace coordinator and reconciles mutating jobs through the existing notification channel. `gitrust-git` owns command construction, exact bytes, locks and trust checks. This path adds no dependency edges.
+
+[Changes and Commits](CHANGES_AND_COMMITS.md) · [ADR 0009](adr/0009-local-changes-and-commits.md)

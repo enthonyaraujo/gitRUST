@@ -1,3 +1,4 @@
+mod changes;
 mod dialogs;
 mod repositories;
 

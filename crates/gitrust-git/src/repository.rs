@@ -34,6 +34,7 @@ pub struct RepositoryCandidate {
     worktree: Option<PathBuf>,
     git_dir: PathBuf,
     identity: RepositoryIdentity,
+    directories: [DirectoryStamp; 3],
 }
 
 /// An application decision that the identified metadata is local, controlled
@@ -53,6 +54,26 @@ pub struct RepositoryInfo {
     pub head: HeadState,
     /// Storage object format reported by Git.
     pub object_format: String,
+}
+
+#[cfg(unix)]
+type DirectoryStamp = (u64, u64);
+#[cfg(not(unix))]
+type DirectoryStamp = Option<std::time::SystemTime>;
+
+fn directory_stamp(path: &Path) -> Result<DirectoryStamp, GitError> {
+    let meta = metadata(path)?
+        .filter(|meta| !is_link(meta) && meta.is_dir())
+        .ok_or(GitError::InvalidRepository)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Ok((meta.dev(), meta.ino()))
+    }
+    #[cfg(not(unix))]
+    {
+        Ok(meta.created().ok())
+    }
 }
 
 impl RepositoryCandidate {
@@ -106,6 +127,7 @@ impl RepositoryCandidate {
                     worktree: None,
                     git_dir: dir.into(),
                     identity: RepositoryIdentity(dir.into()),
+                    directories: [directory_stamp(dir)?; 3],
                 });
             }
         }
@@ -155,17 +177,23 @@ impl RepositoryCandidate {
         Ok(Self {
             location: root.into(),
             worktree: Some(root.into()),
-            git_dir,
+            directories: [
+                directory_stamp(root)?,
+                directory_stamp(&git_dir)?,
+                directory_stamp(&common)?,
+            ],
             identity: RepositoryIdentity(common),
+            git_dir,
         })
     }
 
-    pub(crate) fn published_worktree(location: PathBuf) -> Self {
+    pub(crate) fn published_worktree(&self, location: PathBuf) -> Self {
         let git_dir = location.join(".git");
         Self {
             worktree: Some(location.clone()),
             location,
             identity: RepositoryIdentity(git_dir.clone()),
+            directories: self.directories,
             git_dir,
         }
     }
@@ -282,6 +310,20 @@ impl TrustedRepository {
             }
         }
         Ok(config)
+    }
+
+    pub(crate) fn validate_reflogs(&self, control: Control<'_>) -> Result<(), GitError> {
+        let git_dir = self.0.git_dir();
+        let common = self.0.identity.common_dir();
+        for logs in [common, git_dir].into_iter().map(|dir| dir.join("logs")) {
+            if metadata(&logs)?.is_some() {
+                validate_tree(&logs, control)?;
+            }
+            if git_dir == common {
+                break;
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn head_reference(&self) -> Result<Option<ReferenceName>, GitError> {

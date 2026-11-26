@@ -115,3 +115,12 @@ URL credentials, queries and fragments are rejected at the input boundary. Clone
 The no-replace guarantee applies when a competing entry appears at the final destination, including a symlink where supported. The caller controls the parent and its ancestors for the operation's lifetime. Paths are not held by directory handles on every platform, so replacing an ancestor concurrently remains outside the threat boundary. Cancellation after publication preserves the completed repository and its success result.
 
 On Windows, publication uses the audited `tempfile` Windows backend to request `MoveFileExW` with neither replacement nor cross-volume copying. The private staging directory owns cleanup. The native CI test creates an empty destination after validation and checks that publication preserves both entries.
+
+
+## Stage 04 local mutations
+
+Changes and commits use the existing local trust boundary and serialized write reservations. The engine validates the authorized repository again, rejects unexpected configuration and locks, and uses literal paths with NUL delimiters. Destructive previews are compared against fresh Git bytes before any restore or deletion. Untracked deletion on Linux and macOS uses open directory descriptors and no-follow semantics. The user must still control access to repository metadata. Git lockfiles and the final compare-and-swap protect individual resources; working-tree restore and index publication do not form one atomic transaction.
+
+Only explicit signing requests can select a verified system signing executable. Private keys and passphrases remain with that executable. Signer output and key identifiers are excluded from workspace notices. Protected repository operations retain the existing network and hook restrictions.
+
+[ADR 0009](adr/0009-local-changes-and-commits.md)

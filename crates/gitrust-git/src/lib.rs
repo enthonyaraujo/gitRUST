@@ -1,4 +1,4 @@
-//! Read-only, local Git inspection with a bounded background executor.
+//! Local Git inspection and mutation with a bounded background executor.
 
 mod command;
 mod creation;
@@ -7,6 +7,7 @@ mod engine;
 mod executable;
 mod history;
 mod model;
+mod mutation;
 mod process;
 mod repository;
 mod status;
@@ -22,6 +23,7 @@ pub use history::{BranchInfo, BranchList, CommitInfo, History, Signature};
 pub use model::{
     FileChange, GitError, GitPath, HeadState, ObjectId, OutputStream, ProcessOutput, ReferenceName,
 };
+pub use mutation::{ChangePatch, Mutation, MutationAction, change_rows};
 pub use repository::{RepositoryCandidate, RepositoryIdentity, RepositoryInfo, TrustedRepository};
 pub use status::{BranchStatus, EntryKind, RepositoryStatus, StatusEntry, SubmoduleState};
 

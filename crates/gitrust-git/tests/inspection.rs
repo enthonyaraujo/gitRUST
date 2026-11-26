@@ -1157,3 +1157,549 @@ fn public_https_clone_materializes_and_validates_a_workspace() {
     assert!(info.has_remote);
     assert_eq!(status.entries, []);
 }
+
+mod writes {
+    use super::*;
+    use gitrust_core::changes::{
+        ChangeKey, ChangeSide, CommitAuthor, CommitDraft, CommitSigning, PatchSelection,
+    };
+    use gitrust_git::{ChangePatch, Mutation, MutationAction, change_rows};
+    use std::{fmt::Write as _, sync::Arc};
+
+    fn key(side: ChangeSide, path: impl Into<PathBuf>) -> ChangeKey {
+        ChangeKey {
+            path: path.into(),
+            side,
+        }
+    }
+
+    fn write(
+        engine: &GitEngine,
+        repo: &TrustedRepository,
+        action: MutationAction,
+    ) -> Result<TaskValue, GitError> {
+        apply(engine, repo, status(engine, repo, false), action)
+    }
+
+    fn apply(
+        engine: &GitEngine,
+        repo: &TrustedRepository,
+        snapshot: RepositoryStatus,
+        action: MutationAction,
+    ) -> Result<TaskValue, GitError> {
+        submit(
+            engine,
+            Request::Mutate(
+                repo.clone(),
+                Box::new(Mutation {
+                    expected: Arc::new(snapshot),
+                    action,
+                }),
+            ),
+        )
+        .result
+    }
+
+    fn preview(engine: &GitEngine, repo: &TrustedRepository, key: ChangeKey) -> ChangePatch {
+        let TaskValue::Change(patch) = inspect(engine, repo, Inspection::Change(key)) else {
+            panic!("expected preview");
+        };
+        patch
+    }
+
+    fn review(
+        engine: &GitEngine,
+        repo: &TrustedRepository,
+        keys: Vec<ChangeKey>,
+    ) -> Vec<ChangePatch> {
+        let TaskValue::DiscardReview(patches) =
+            inspect(engine, repo, Inspection::DiscardReview(keys))
+        else {
+            panic!("expected review");
+        };
+        patches
+    }
+
+    fn author() -> CommitAuthor {
+        CommitAuthor {
+            name: "Stage Four".into(),
+            email: "fixture@example.invalid".into(),
+        }
+    }
+
+    fn partial(patch: ChangePatch, hunk: usize, line: Option<usize>) -> MutationAction {
+        MutationAction::Partial {
+            patch: Arc::new(patch),
+            selection: vec![PatchSelection { hunk, line }],
+        }
+    }
+
+    #[test]
+    fn first_commit_whole_batch_and_amend_use_only_the_index() {
+        let f = Fixture::new(&[]);
+        let e = engine(EngineOptions::default());
+        let r = trust(&e, f.path());
+        f.write("-option", "alpha\n");
+        f.write("unicode cópia.txt", "bravo\n");
+        let paths = vec![
+            key(ChangeSide::Untracked, "-option"),
+            key(ChangeSide::Untracked, "unicode cópia.txt"),
+        ];
+        let untracked = preview(&e, &r, paths[1].clone()).display();
+        assert!(untracked.text.contains("+bravo"), "{untracked:?}");
+        write(&e, &r, MutationAction::Stage(paths)).expect("stage two under a lock");
+        write(
+            &e,
+            &r,
+            MutationAction::Unstage(vec![key(ChangeSide::Staged, "-option")]),
+        )
+        .expect("unstage unborn");
+        f.write("unicode cópia.txt", "uncommitted\n");
+        let draft = CommitDraft {
+            title: "Primeiro commit".into(),
+            description: "Descrição".into(),
+            author: author(),
+            ..CommitDraft::default()
+        };
+        assert!(matches!(
+            write(
+                &e,
+                &r,
+                MutationAction::Commit(CommitDraft {
+                    author: CommitAuthor::default(),
+                    ..draft.clone()
+                })
+            ),
+            Err(GitError::AuthorRequired)
+        ));
+        let TaskValue::Changed(Some(initial)) =
+            write(&e, &r, MutationAction::Commit(draft)).expect("first commit")
+        else {
+            panic!("no commit ID");
+        };
+        assert_eq!(f.oid("HEAD"), initial);
+        assert_eq!(f.git(["show", "HEAD:unicode cópia.txt"]).stdout, b"bravo\n");
+        assert_eq!(
+            f.git(["ls-tree", "-z", "--name-only", "HEAD"]).stdout,
+            "unicode cópia.txt\0".as_bytes(),
+        );
+        let TaskValue::CommitDraft(mut amend, _) =
+            inspect(&e, &r, Inspection::CommitDraft { amend: true })
+        else {
+            panic!("no amend draft");
+        };
+        assert_eq!(amend.title, "Primeiro commit");
+        amend.title = "Edited title".into();
+        amend.author = CommitAuthor {
+            name: "Committer".into(),
+            ..author()
+        };
+        write(&e, &r, MutationAction::Commit(amend)).expect("message-only amend");
+        assert_ne!(f.oid("HEAD"), initial);
+        assert_eq!(
+            f.git(["log", "-1", "--format=%an|%cn|%s"]).stdout,
+            b"Stage Four|Committer|Edited title\n"
+        );
+        assert_eq!(f.git(["show", "HEAD:unicode cópia.txt"]).stdout, b"bravo\n");
+    }
+
+    #[test]
+    fn single_line_and_hunk_apply_in_both_directions_and_keep_other_bytes() {
+        let f = Fixture::new(&[]);
+        let e = engine(EngineOptions::default());
+        let name = "cópia [arquivo].txt";
+        let mut before = String::new();
+        for line in 0..32 {
+            write!(before, "line {line}\r\n").expect("text fixture");
+        }
+        before.push_str("old tail");
+        f.write(name, &before);
+        f.commit("baseline");
+        let r = trust(&e, f.path());
+        let after = before
+            .replace("line 3\r", "ação\t\r")
+            .replace("old tail", "new tail");
+        f.write(name, &after);
+        let unstaged = key(ChangeSide::Unstaged, name);
+        let staged = key(ChangeSide::Staged, name);
+        let patch = preview(&e, &r, unstaged.clone());
+        let data = patch.display();
+        assert!(data.partial);
+        assert_eq!(data.hunks.len(), 2);
+        assert!(data.text.contains("\\ No newline"));
+        let add = data.hunks[0]
+            .lines
+            .iter()
+            .position(|line| line.text.starts_with("ação"))
+            .expect("addition");
+        write(&e, &r, partial(patch, 0, Some(add))).expect("stage exactly one addition");
+        let index = f.git(["show", ":cópia [arquivo].txt"]).stdout;
+        assert!(
+            index
+                .windows(b"a\xc3\xa7\xc3\xa3o\t\r\n".len())
+                .any(|bytes| bytes == b"a\xc3\xa7\xc3\xa3o\t\r\n")
+        );
+        assert!(
+            index
+                .windows(b"line 3\r\n".len())
+                .any(|bytes| bytes == b"line 3\r\n")
+        );
+        assert!(index.ends_with(b"old tail"));
+        let rows = change_rows(&status(&e, &r, false)).expect("same path on both layers");
+        assert!(rows.iter().any(|row| row.key == staged));
+        assert!(rows.iter().any(|row| row.key == unstaged));
+        let cached = preview(&e, &r, staged.clone());
+        let pos = cached.display().hunks[0]
+            .lines
+            .iter()
+            .position(|line| line.text.starts_with("ação"))
+            .expect("staged addition");
+        write(&e, &r, partial(cached, 0, Some(pos))).expect("unstage exactly one line");
+        assert_eq!(
+            f.git(["show", ":cópia [arquivo].txt"]).stdout,
+            before.as_bytes()
+        );
+        write(&e, &r, partial(preview(&e, &r, unstaged.clone()), 1, None))
+            .expect("stage entire hunk");
+        assert_eq!(
+            f.git(["show", ":cópia [arquivo].txt"]).stdout,
+            before.replace("old tail", "new tail").as_bytes()
+        );
+        write(&e, &r, partial(preview(&e, &r, staged), 0, None)).expect("unstage entire hunk");
+        assert_eq!(
+            f.git(["show", ":cópia [arquivo].txt"]).stdout,
+            before.as_bytes()
+        );
+        assert_eq!(
+            fs::read(f.path().join(name)).expect("worktree"),
+            after.as_bytes()
+        );
+    }
+
+    #[test]
+    fn partial_new_and_deleted_files_only_change_the_selected_index_lines() {
+        let f = Fixture::new(&[]);
+        f.write("removed", b"one\ntwo\n");
+        f.commit("baseline");
+        let e = engine(EngineOptions::default());
+        let r = trust(&e, f.path());
+        f.write("new", b"alpha\nbeta\n");
+        let new = preview(&e, &r, key(ChangeSide::Untracked, "new"));
+        write(&e, &r, partial(new, 0, Some(1))).expect("stage one new-file line");
+        assert_eq!(f.git(["show", ":new"]).stdout, b"beta\n");
+        assert_eq!(
+            fs::read(f.path().join("new")).expect("new worktree file"),
+            b"alpha\nbeta\n"
+        );
+        let new = preview(&e, &r, key(ChangeSide::Staged, "new"));
+        write(&e, &r, partial(new, 0, None)).expect("unstage added hunk");
+        assert_eq!(f.git(["ls-files", "--", "new"]).stdout, []);
+        fs::remove_file(f.path().join("removed")).expect("fixture delete");
+        let removed = preview(&e, &r, key(ChangeSide::Unstaged, "removed"));
+        write(&e, &r, partial(removed, 0, Some(0))).expect("stage one deleted-file line");
+        assert_eq!(f.git(["show", ":removed"]).stdout, b"two\n");
+        let removed = preview(&e, &r, key(ChangeSide::Unstaged, "removed"));
+        write(&e, &r, partial(removed, 0, None)).expect("stage final deletion");
+        assert_eq!(f.git(["ls-files", "--", "removed"]).stdout, []);
+        let removed = preview(&e, &r, key(ChangeSide::Staged, "removed"));
+        write(&e, &r, partial(removed, 0, Some(1))).expect("unstage one deleted-file line");
+        assert_eq!(f.git(["show", ":removed"]).stdout, b"two\n");
+        assert!(!f.path().join("removed").exists());
+    }
+
+    #[test]
+    fn mutation_that_times_out_before_execution_leaves_index_untouched() {
+        let f = Fixture::new(&[]);
+        let e = engine(EngineOptions::default());
+        let r = trust(&e, f.path());
+        f.write("pending", b"keep\n");
+        let snapshot = status(&e, &r, false);
+        let timed = engine(EngineOptions {
+            timeout: std::time::Duration::from_nanos(1),
+            ..EngineOptions::default()
+        });
+        let result = apply(
+            &timed,
+            &r,
+            snapshot,
+            MutationAction::Stage(vec![key(ChangeSide::Untracked, "pending")]),
+        );
+        assert!(matches!(result, Err(GitError::Timeout)));
+        assert!(!f.path().join(".git/index.lock").exists());
+        assert_eq!(f.git(["ls-files", "--"]).stdout, []);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn authorization_does_not_follow_a_replaced_repository_at_the_same_path() {
+        let original = Fixture::new(&[]);
+        let replacement = Fixture::new(&[]);
+        let e = engine(EngineOptions::default());
+        let r = trust(&e, original.path());
+        original.write("same", "original");
+        let snapshot = status(&e, &r, false);
+        replacement.write("same", "replacement");
+        let archive = replacement.path().join("displaced");
+        fs::rename(original.path().join(".git"), &archive).expect("displace metadata");
+        fs::rename(
+            replacement.path().join(".git"),
+            original.path().join(".git"),
+        )
+        .expect("replace metadata");
+        let result = apply(
+            &e,
+            &r,
+            snapshot,
+            MutationAction::Stage(vec![key(ChangeSide::Untracked, "same")]),
+        );
+        assert!(matches!(result, Err(GitError::SecurityPolicyViolation(_))));
+        assert_eq!(original.git(["ls-files", "--"]).stdout, []);
+    }
+
+    #[test]
+    fn discard_uses_reviewed_bytes_and_preserves_existing_index_and_locks() {
+        let f = Fixture::new(&[]);
+        let e = engine(EngineOptions::default());
+        f.write("tracked", b"HEAD\n");
+        f.commit("baseline");
+        let r = trust(&e, f.path());
+        f.write("tracked", b"index\n");
+        f.git(["add", "--", "tracked"]);
+        f.write("tracked", b"to be discarded\n");
+        f.write("new", b"new\0binary\n");
+        let key1 = key(ChangeSide::Unstaged, "tracked");
+        let key2 = key(ChangeSide::Untracked, "new");
+        let reviewed = review(&e, &r, vec![key1.clone(), key2.clone()]);
+        assert!(reviewed[1].display().binary);
+        f.write("tracked", b"changed since review\n");
+        assert!(matches!(
+            write(&e, &r, MutationAction::Discard(reviewed)),
+            Err(GitError::StaleSnapshot)
+        ));
+        assert!(f.path().join("new").exists());
+        let before_lock = status(&e, &r, false);
+        let lock = f.path().join(".git/index.lock");
+        fs::write(&lock, "external lock").expect("external lock");
+        assert!(matches!(
+            apply(
+                &e,
+                &r,
+                before_lock,
+                MutationAction::Stage(vec![key2.clone()])
+            ),
+            Err(GitError::RepositoryLocked)
+        ));
+        assert_eq!(fs::read(&lock).expect("lock preserved"), b"external lock");
+        fs::remove_file(lock).expect("release fixture lock");
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        write(
+            &e,
+            &r,
+            MutationAction::Discard(review(&e, &r, vec![key1, key2])),
+        )
+        .expect("confirmed discard");
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        write(&e, &r, MutationAction::Discard(review(&e, &r, vec![key1])))
+            .expect("confirmed discard");
+        assert_eq!(
+            fs::read(f.path().join("tracked")).expect("worktree"),
+            b"index\n"
+        );
+        assert_eq!(f.git(["show", ":tracked"]).stdout, b"index\n");
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        assert!(!f.path().join("new").exists());
+        write(
+            &e,
+            &r,
+            MutationAction::Discard(review(&e, &r, vec![key(ChangeSide::Staged, "tracked")])),
+        )
+        .expect("confirmed staged discard");
+        assert_eq!(
+            fs::read(f.path().join("tracked")).expect("worktree"),
+            b"HEAD\n"
+        );
+        assert_eq!(f.git(["show", ":tracked"]).stdout, b"HEAD\n");
+    }
+
+    #[test]
+    fn binary_rename_and_non_utf8_paths_are_whole_file_changes() {
+        let f = Fixture::new(&[]);
+        let e = engine(EngineOptions::default());
+        f.write("old", b"old\0binary\n");
+        f.commit("baseline");
+        let r = trust(&e, f.path());
+        f.git(["mv", "old", "rename with spaces"]);
+        let key = key(ChangeSide::Staged, "rename with spaces");
+        let rows = change_rows(&status(&e, &r, false)).expect("rename");
+        let renamed = rows.iter().find(|row| row.key == key).expect("rename row");
+        assert_eq!(renamed.from.as_deref(), Some(Path::new("old")));
+        let patch = preview(&e, &r, key.clone());
+        assert!(patch.display().text.contains("rename from old"));
+        assert!(!patch.display().partial);
+        write(&e, &r, MutationAction::Unstage(vec![key]))
+            .expect("unstage original and destination");
+        assert_eq!(f.git(["diff", "--cached", "--name-only"]).stdout, []);
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let raw = PathBuf::from(OsStr::from_bytes(b"name\xff [literal]"));
+            f.write(&raw, b"native");
+            let native = super::writes::key(ChangeSide::Untracked, &raw);
+            write(&e, &r, MutationAction::Stage(vec![native])).expect("native bytes");
+            assert!(
+                f.git(["ls-files", "-z", "--"])
+                    .stdout
+                    .split(|byte| *byte == 0)
+                    .any(|line| line == raw.as_os_str().as_bytes())
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_concurrent_snapshots_and_configuration_changes() {
+        let f = Fixture::new(&[]);
+        let e = engine(EngineOptions::default());
+        let r = trust(&e, f.path());
+        f.write("first", b"first");
+        f.write("second", b"second");
+        let baseline = Arc::new(status(&e, &r, false));
+        let task = |path| {
+            Request::Mutate(
+                r.clone(),
+                Box::new(Mutation {
+                    expected: baseline.clone(),
+                    action: MutationAction::Stage(vec![key(ChangeSide::Untracked, path)]),
+                }),
+            )
+        };
+        let first = e.submit(task("first")).expect("enqueue");
+        let second = e.submit(task("second")).expect("enqueue");
+        assert!(matches!(
+            first.wait().expect("first").result,
+            Ok(TaskValue::Changed(None))
+        ));
+        assert!(matches!(
+            second.wait().expect("second").result,
+            Err(GitError::StaleSnapshot)
+        ));
+        assert_eq!(f.git(["ls-files", "--"]).stdout, b"first\n");
+        let before = status(&e, &r, false);
+        f.git([
+            "config",
+            "--local",
+            "gpg.ssh.program",
+            "unauthorized-signer",
+        ]);
+        let result = apply(
+            &e,
+            &r,
+            before,
+            MutationAction::Stage(vec![key(ChangeSide::Untracked, "second")]),
+        );
+        assert!(matches!(
+            result,
+            Err(GitError::RepositoryNotTrusted | GitError::SecurityPolicyViolation(_))
+        ));
+        assert_eq!(f.git(["ls-files", "--"]).stdout, b"first\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "requires a disposable GPG keyring and GITRUST_TEST_GPG_FINGERPRINT"]
+    fn openpgp_uses_the_explicit_system_signer_and_key() {
+        let keyring = std::env::var_os("GNUPGHOME").expect("isolated verification keyring");
+        let fingerprint =
+            std::env::var("GITRUST_TEST_GPG_FINGERPRINT").expect("disposable fingerprint");
+        assert!(Path::new(&keyring).join("gitrust-test-keyring").is_file());
+        let f = Fixture::new(&[]);
+        let e = engine(EngineOptions::default());
+        let r = trust(&e, f.path());
+        f.write("file", b"signed content");
+        write(
+            &e,
+            &r,
+            MutationAction::Stage(vec![key(ChangeSide::Untracked, "file")]),
+        )
+        .expect("stage");
+        let draft = CommitDraft {
+            title: "Signed with OpenPGP".into(),
+            author: author(),
+            signing: CommitSigning::OpenPgp(fingerprint),
+            ..CommitDraft::default()
+        };
+        write(&e, &r, MutationAction::Commit(draft)).expect("requested OpenPGP signature");
+        assert!(
+            fixture_command(f.path())
+                .env("GNUPGHOME", keyring)
+                .args(["-c", "gpg.program=/usr/bin/gpg", "verify-commit", "HEAD",])
+                .output()
+                .expect("verify with the disposable keyring")
+                .status
+                .success()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ssh_explicit_signing_and_signed_amend_policy() {
+        let f = Fixture::new(&[]);
+        let signer = Path::new("/usr/bin/ssh-keygen");
+        if !signer.is_file() {
+            return;
+        }
+        let keys = tempfile::tempdir().expect("test keys only");
+        let key_path = keys.path().join("fixture");
+        assert!(
+            Command::new(signer)
+                .env_clear()
+                .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+                .arg(&key_path)
+                .status()
+                .expect("generate disposable key")
+                .success()
+        );
+        let e = engine(EngineOptions::default());
+        let r = trust(&e, f.path());
+        f.write("file", b"content");
+        write(
+            &e,
+            &r,
+            MutationAction::Stage(vec![key(ChangeSide::Untracked, "file")]),
+        )
+        .expect("stage");
+        let draft = CommitDraft {
+            title: "Signed".into(),
+            author: author(),
+            signing: CommitSigning::Ssh(key_path),
+            ..CommitDraft::default()
+        };
+        write(&e, &r, MutationAction::Commit(draft.clone())).expect("sign using explicit key");
+        let old = f.oid("HEAD");
+        let commit = f.git(["cat-file", "commit", "HEAD"]);
+        assert!(
+            String::from_utf8_lossy(&commit.stdout)
+                .contains("gpgsig -----BEGIN SSH SIGNATURE-----")
+        );
+        let unsigned = CommitDraft {
+            signing: CommitSigning::None,
+            amend: true,
+            ..draft.clone()
+        };
+        assert!(matches!(
+            write(&e, &r, MutationAction::Commit(unsigned)),
+            Err(GitError::SigningFailed)
+        ));
+        assert_eq!(f.oid("HEAD"), old);
+        write(
+            &e,
+            &r,
+            MutationAction::Commit(CommitDraft {
+                title: "Signed amend".into(),
+                amend: true,
+                ..draft
+            }),
+        )
+        .expect("signed amend");
+        assert_ne!(f.oid("HEAD"), old);
+    }
+}
