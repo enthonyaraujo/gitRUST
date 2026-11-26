@@ -144,9 +144,6 @@ fn validate_destination(path: &Path) -> Result<(), GitError> {
 
 fn valid_name(name: &OsStr) -> bool {
     let bytes = name.as_encoded_bytes();
-    if bytes.eq_ignore_ascii_case(b".git") {
-        return false;
-    }
     #[cfg(windows)]
     {
         if bytes.last().is_some_and(|byte| matches!(byte, b'.' | b' '))
@@ -175,7 +172,7 @@ fn valid_name(name: &OsStr) -> bool {
             return false;
         }
     }
-    true
+    !bytes.eq_ignore_ascii_case(b".git")
 }
 
 #[cfg(test)]

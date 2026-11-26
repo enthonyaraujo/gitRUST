@@ -169,8 +169,15 @@ fn publish(working: &Path, destination: &Path) -> Result<(), GitError> {
     )
     .map_err(io::Error::from);
     #[cfg(windows)]
-    // MoveFileEx does not replace directories, and a directory cannot replace a file.
-    let result = fs::rename(working, destination);
+    let result = {
+        // tempfile's Windows backend uses MoveFileExW without replacement or copying.
+        // The outer TempDir retains responsibility for all scratch cleanup.
+        tempfile::TempPath::try_from_path(working).and_then(|mut path| {
+            path.disable_cleanup(true);
+            path.persist_noclobber(destination)
+                .map_err(|error| error.error)
+        })
+    };
     #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     let result = Err(io::Error::new(
         io::ErrorKind::Unsupported,
@@ -196,6 +203,7 @@ mod tests {
         let parent = tempfile::tempdir().expect("isolated destination parent");
         let working = parent.path().join("working");
         fs::create_dir(&working).expect("prepared directory");
+        fs::write(working.join("own"), b"prepared data").expect("prepared contents");
         let destination = resolve_destination(&parent.path().join("destination"))
             .expect("initially unoccupied target");
         fs::create_dir(&destination).expect("concurrent directory creation");
@@ -203,7 +211,10 @@ mod tests {
             publish(&working, &destination),
             Err(GitError::DestinationExists)
         ));
-        assert!(working.is_dir());
+        assert_eq!(
+            fs::read(working.join("own")).expect("preserved source"),
+            b"prepared data"
+        );
         assert!(destination.is_dir());
         assert_eq!(
             fs::read_dir(destination)
