@@ -570,12 +570,29 @@ fn conflict_reports_index_stages_without_a_combined_patch() {
 
 #[cfg(unix)]
 #[test]
-fn unix_paths_preserve_newline_tabs_non_utf8_and_pathspec_syntax() {
+fn unix_paths_preserve_native_bytes_and_literal_pathspecs() {
     use std::os::unix::ffi::{OsStrExt, OsStringExt};
     let fixture = Fixture::new(&[]);
-    let weird = PathBuf::from(std::ffi::OsString::from_vec(
-        b"a tab\tand\nbyte\xff".to_vec(),
-    ));
+    // macOS rejects the invalid UTF-8 filename on the runner's filesystem.
+    // The decoder still has to preserve that byte independently of the host.
+    let synthetic =
+        RepositoryStatus::parse(b"# branch.oid (initial)\0# branch.head main\0? byte\xff\0")
+            .expect("byte-oriented status entry");
+    assert_eq!(
+        synthetic.entries[0]
+            .path
+            .to_path_buf()
+            .expect("native byte path")
+            .as_os_str()
+            .as_bytes(),
+        b"byte\xff"
+    );
+    let native_name = if cfg!(target_os = "macos") {
+        b"a tab\tand\nbyte".as_slice()
+    } else {
+        b"a tab\tand\nbyte\xff"
+    };
+    let weird = PathBuf::from(std::ffi::OsString::from_vec(native_name.to_vec()));
     let magic = Path::new(":(glob)*");
     fixture.write(&weird, b"one\n");
     fixture.write(magic, b"one\n");
