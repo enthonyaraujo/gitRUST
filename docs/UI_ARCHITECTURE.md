@@ -1,0 +1,54 @@
+# Native UI architecture
+
+The binary owns eframe, wgpu, platform diagnostics, and native window lifecycle. `gitrust-ui` owns presentation and depends on egui and gitrust-core. It returns the existing stack-allocated resize and close events. Core stays independent of egui. The UI crate performs no repository discovery, file I/O, network I/O or Git subprocess execution.
+
+| Module | Responsibility |
+| --- | --- |
+| `theme` | Light/Dark palettes, semantic Git colors, dimensions, font roles and embedded font registration |
+| `components` | Shared widget compositions, keyboard-aware virtual lists and shell primitives |
+| `shell` | Workspace, selection, menus, status bar, responsive layout, preferences and dialogs |
+| `diff` | Visual alignment and indexing, unified/split rendering, inline changed spans and copy |
+| `demo` | Read-only sample data and its presentation adapter |
+| `gallery` | Diagnostic component pages, state scenarios and stress datasets |
+| `i18n` | Typed English and Brazilian Portuguese message keys |
+
+## Workspace and shell
+
+The decorated window retains native move, resize and system controls. The in-window app menu follows the File, Edit, View, Repository, Branch, Help convention and collapses into one menu at narrow widths. The menus are rendered in egui on each desktop platform. The file preview combines navigation and file identity in the compact header to preserve room for the diff. Integration with the native macOS global menu bar is deferred.
+
+The regular workspace starts empty with Settings available. Diagnostic mode adds gallery and sample-workspace navigation, clearly identifies sample data, and keeps all Git commands disabled. The Changes sidebar shows the draft composer when enough vertical space remains for the file list. A shorter layout presents the same draft in a dialog. The active branch is context and confirmation clears only the sample text in memory. Theme, locale and scale remain in memory for the current application session.
+
+```sh
+gitrust
+gitrust --diagnostics
+gitrust --diagnostic-view unified --theme dark
+gitrust --diagnostic-view split --theme light --language pt-BR
+gitrust --diagnostic-view history --scale 125
+gitrust --diagnostic-view compose
+gitrust --diagnostic-view branch
+gitrust --diagnostic-view repository
+gitrust --diagnostic-view long-diff
+gitrust --diagnostic-view binary
+gitrust --diagnostic-view stress-list
+gitrust --diagnostic-view stress-diff
+gitrust --diagnostic-view settings --smoke-size 640x400 --smoke-screenshot /tmp/gitrust-settings.ppm
+```
+
+## Rendering and list models
+
+Use `ListSelection::show` with an item count, a position-to-key function and a row getter for that key. It receives only the range egui lays out. The widget ID derives from the list scope and stable item key, independent of filtering and display locale. On a keyboard navigation boundary it moves the viewport to the target index. The demonstration workspace recomputes filter matches only when the query or backing view changes. The gallery caches generated labels and adds new labels only when a larger dataset is first requested.
+
+`TextDiff` stores a prepared, aligned list of visual lines and indexes unified lines at construction. The renderer can access a visible row by index in either mode. Paired lines highlight the segment between their common prefix and suffix using UTF-8 boundaries. Both modes use a standard two-axis scroll area. Split mode uses the same horizontal offset for both panes and keeps their gutters and hunk headers pinned. The viewport converts its vertical bounds to a visible row range. The stress diff derives each requested row from its index. Binary files and empty diffs have separate states.
+
+The current diff serves static fixture text. A future adapter can supply owned presentation data from Git Engine output and preserve line ownership, ordering and hunk alignment. The UI layer has no Git parser, commit-graph builder or syntax-highlighting dependency. Native drag selection is limited to rendered labels. The explicit Copy entire diff command returns the full unified body in either layout. It preserves source Unicode and tabs. The rendered view expands tabs at four-column stops, and native text selection copies displayed text. The sample body has no repository file headers.
+
+## Stage 01.2 verification
+
+Tab activation and keyboard shortcuts use the same shell transition. The transition preserves the current search query and recomputes the matching rows for the next tab. Row focus and selection continue to use the fixture identity within the list scope. Branch changes keep their separate reset behavior. Tabs publish the selected property on their AccessKit nodes while keyboard focus remains an independent state.
+
+The existing `repository` and `branch` diagnostic views open the actual popup controls on launch. Native capture records include the executable digest, launch arguments, framebuffer dimensions and effective content points. The Stage 01.2 artifact set includes captures of both popups open and separate XWayland automation that activates their accessible controls. A smoke screenshot alone does not verify a subsequent action. Capture manifest (`target/stage01.2-evidence/capture-manifest.json`) · Interaction log (`target/stage01.2-evidence/native-access-final.log`)
+
+
+## Stage 03 repository workspace
+
+Interactive launches show the real repository workspace, with a searchable Repository selector, recent entries, and forms for open, init and clone. The UI emits repository actions and receives snapshots. Directory dialogs, Git commands, persistence and watcher management run outside rendering. The theme, typography, native AccessKit interactions and Wayland IME flow are shared with the existing shell. Synthetic workspaces remain available via diagnostics flags. [Repository management](REPOSITORY_MANAGEMENT.md)

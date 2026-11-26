@@ -8,10 +8,10 @@ This document defines the staged engineering plan for **gitRUST**. Each stage ha
 
 | Stage | Name | Status | Included in `v0.1.0` |
 | --- | --- | --- | --- |
-| **00** | Project Foundation | **Completed (Pending Maintainer Git Review)** | Yes |
-| **01** | Design System | Planned | Yes |
-| **02** | Git Engine | Planned | Yes |
-| **03** | Repository Management | Planned | Yes |
+| **00** | Project Foundation | Completed and integrated | Yes |
+| **01** | Design System | Completed | Yes |
+| **02** | Git Engine | Completed and integrated | Yes |
+| **03** | Repository Management | Implemented locally, pending review | Yes |
 | **04** | Changes and Commits | Planned | Yes |
 | **05** | Branches and History | Planned | Yes |
 | **06** | Remote Operations | Planned | Yes |
@@ -30,19 +30,22 @@ This document defines the staged engineering plan for **gitRUST**. Each stage ha
 - Governance files, preliminary security architecture, benchmark methodology, ADRs `0001`–`0005`, and multi-OS CI validation.
 
 ### Stage 01 — Design System
-- Original visual identity for gitRUST (color tokens, dark/light high-contrast themes, typography scale, spacing grid, semantic status colors for diffs/states).
-- Reusable `egui` widget primitives in `gitrust-ui` (panels, splitters, virtualized lists, keyboard navigation focus rings, accessible labels via AccessKit, modal confirmation dialogs).
-- Bundled open-licensed typography and vector icons under `assets/`.
+- Original graphite/copper visual system, embedded typography, light/dark/system appearance, English and Brazilian Portuguese, and session zoom.
+- Native application shell with opt-in gallery, synthetic repository preview, Changes and History workspaces, and unified/split diff foundations.
+- Reusable egui components, semantic accessibility labels, resizable workspace, keyboard navigation, and virtual lists.
+- [Design System](DESIGN_SYSTEM.md), [UI architecture](UI_ARCHITECTURE.md), and [accessibility scope](ACCESSIBILITY.md).
 
 ### Stage 02 — Git Engine
-- Asynchronous, shell-free `git` CLI execution engine in `gitrust-git`.
-- Binary/NUL-delimited output parsers (`status --porcelain=v2 -z`, `diff`, `log`, `branch`, `rev-parse`) preserving non-UTF-8 paths.
-- Per-repository write queue/mutex, safe task cancellation, structured error taxonomy, sanitized environment policy, and isolated temporary-repository integration tests + initial `criterion` benchmarks.
+- Local repository discovery, trust gating and typed, shell-free inspection with system Git 2.45 or newer.
+- Status, two-way diff, paged history and local/remote-tracking branches preserve byte-oriented paths and support SHA-1 and SHA-256.
+- Bounded background concurrency, write reservations by common Git directory, read cancellation, structured errors, temporary-repository tests and opt-in benchmarks.
+- Integrated into develop with the implementation commits preserved. [Git Engine contract and validation](GIT_ENGINE.md#stage-02-validation) · [PR #4](https://github.com/enthonyaraujo/gitRUST/pull/4)
 
 ### Stage 03 — Repository Management
-- Add existing local repositories, initialize new repositories (`git init`), and clone remote repositories (`git clone` with progress reporting).
-- Local workspace state and recent-repository persistence in `gitrust-storage` (XDG Base Directory on Linux, Known Folders on Windows, Application Support on macOS).
-- Filesystem change detection / focus-refresh policy without excessive CPU wakeups.
+- Open, authorize, track, reopen and remove local workspace entries.
+- Initialize new workspaces and clone public HTTPS repositories with progress, cancellation and secure publication.
+- Persist appearance and workspace history and refresh the active workspace on filesystem changes, focus or manual request.
+- [Repository management](REPOSITORY_MANAGEMENT.md)
 
 ### Stage 04 — Changes and Commits
 - Working tree and index inspection (staged, unstaged, untracked, conflicted, and renamed files).
@@ -68,7 +71,7 @@ The first public release, **`v0.1.0`**, is planned to encompass **Stages 00 thro
 Advancing to `v0.1.0` requires:
 1. Functional completion of Stages `00`–`06` without mock or partial placeholders.
 2. Passing automated test suites and CI checks across Linux, Windows, and macOS.
-3. Verification of the security invariants defined in [`docs/SECURITY_ARCHITECTURE.md`](SECURITY_ARCHITECTURE.md) (no shell execution, safe untrusted-repo inspection, no plaintext secrets, strict TLS).
+3. Verification of the security invariants defined in [`docs/SECURITY_ARCHITECTURE.md`](SECURITY_ARCHITECTURE.md) (no shell execution, explicit repository trust and local inspection policy, no plaintext secrets, strict TLS).
 4. Meeting stability and responsiveness baselines on real repositories.
 
 ---

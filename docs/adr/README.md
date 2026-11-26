@@ -11,6 +11,9 @@ This directory records significant architectural decisions made in **gitRUST**, 
 | [ADR-0003](0003-git-cli-initial-integration-strategy.md) | Use Git CLI Initially Behind an Abstract Engine Boundary | Accepted | 00 |
 | [ADR-0004](0004-cargo-workspace-organization.md) | Organize Codebase as a Multi-Crate Acyclic Cargo Workspace | Accepted | 00 |
 | [ADR-0005](0005-cross-platform-strategy.md) | Linux-First Cross-Platform Strategy (Wayland, X11, Windows, macOS) | Accepted | 00 |
+| [ADR-0006](0006-opt-in-ui-diagnostics.md) | Keep synthetic data in opt-in UI diagnostics | Proposed | 01 |
+| [ADR-0007](0007-local-git-inspection.md) | Local Git inspection with an explicit metadata trust boundary | Accepted | 02 |
+| [ADR-0008](0008-workspace-management.md) | Session-authorized workspaces and local provisioning | Proposed | 03 |
 
 ## Lifecycle States
 

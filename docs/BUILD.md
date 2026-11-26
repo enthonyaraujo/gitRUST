@@ -8,7 +8,7 @@ This guide documents toolchain requirements, operating-system dependencies, comp
 
 - **Rust Compiler & Cargo:** Validated Minimum Supported Rust Version (MSRV) is **`1.97.1`** (`[workspace.package] rust-version = "1.97.1"`, Rust 2024 Edition, workspace resolver `3`). While the upstream crate floor (`egui` / `eframe` `0.37.0`) declares `1.95.0`, `gitRUST` only declares an MSRV that has been compiled and tested in local/CI validation (`1.97.1` MSRV job + `stable` `1.99.x`).
 - **Toolchain Update Policy:** [`rust-toolchain.toml`](../rust-toolchain.toml) tracks the `stable` channel for routine development while CI enforces both `stable` and the pinned `rust-version` (`1.97.1`). Raising `rust-version` requires updating `Cargo.toml`, the `msrv` job in `.github/workflows/ci.yml`, and verifying `--locked` builds.
-- **Git:** `git >= 2.38` recommended on host systems (required starting in Stage 02 for repository operations).
+- **Git:** Native `git >= 2.45.0` on trusted absolute PATH entries is required for repository operations, real-Git integration tests and benchmarks. The floor enables `--no-lazy-fetch`. Use a patched system package.
 
 Verify your toolchain:
 
@@ -101,6 +101,10 @@ cargo build --locked --workspace --release
 
 ---
 
+### Git integration tests and hosted runners
+
+`cargo test --locked --workspace` runs real-Git integration tests in temporary repositories. Missing, invalid and older Git binaries fail the tests explicitly. The Linux MSRV job and Linux, Windows and macOS test jobs record `git --version` before running the suites. The currently published Linux, Windows and macOS images include versions above the floor. For a self-hosted runner, provision an updated native Git and prefer its installation directory in PATH before running the jobs. The test suite neither installs nor upgrades system Git. The Unix path fixture exercises tabs, newlines and literal pathspecs on Linux and macOS. Linux also exercises a non-UTF-8 filename on disk. The macOS fixture checks non-UTF-8 bytes at the parser boundary because the hosted filesystem rejects that filename. To verify the floor, prepend the absolute directory of a separately built Git 2.45.0 executable to the test process PATH and run `cargo test --locked -p gitrust-git --test inspection`. [Ubuntu runner](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2604-Readme.md) · [Windows runner](https://github.com/actions/runner-images/blob/main/images/windows/Windows2025-VS2026-Readme.md) · [macOS runner](https://github.com/actions/runner-images/blob/main/images/macos/macos-26-arm64-Readme.md)
+
 ## 4. Running the Desktop Application
 
 ```bash
@@ -128,3 +132,14 @@ env -u WAYLAND_DISPLAY ./target/release/gitrust
 | `WGPU_POWER_PREF` | `low` \| `high` \| `none` | Overrides default `LowPower` GPU selection (e.g., `WGPU_POWER_PREF=high` selects a discrete NVIDIA/AMD GPU). |
 | `WGPU_BACKEND` | `vulkan` \| `dx12` \| `metal` \| `gl` | Restricts `wgpu` backend selection (for example, `WGPU_BACKEND=gl` tests the built-in OpenGL ES path). |
 | `WGPU_ADAPTER_NAME` | Substring match | Filters adapter selection by substring when multiple GPUs are exposed. |
+
+
+### Stage 03 verification
+
+The Linux folder chooser uses the XDG Desktop Portal backend. The manual path field works without an available chooser. The folder reveal action uses the desktop's GIO opener on Linux. To repeat the opt-in HTTPS integration test, set GITRUST_PUBLIC_CLONE_TEST_URL to a small public HTTPS repository and run the command below. The default tests use isolated temporary repositories and an ephemeral loopback TLS probe.
+
+```sh
+cargo test --locked -p gitrust-git --test inspection public_https_clone_materializes_and_validates_a_workspace -- --ignored
+```
+
+For the minimum-version check use an isolated Git 2.45.0 build with its matching HTTPS helper when exercising clone. The installed Git remains the default outside the test process.

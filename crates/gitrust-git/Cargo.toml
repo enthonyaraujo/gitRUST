@@ -1,6 +1,6 @@
 [package]
 name = "gitrust-git"
-description = "Git engine boundary and command-safety contracts for gitRUST (Stage 02 target)."
+description = "Local read-only Git inspection and subprocess supervision for gitRUST."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,6 +10,17 @@ publish.workspace = true
 
 [dependencies]
 gitrust-core.workspace = true
+process-wrap = { version = "10.0.2", default-features = false, features = ["std", "process-group", "job-object"] }
+tempfile = "3.27.0"
+url = "2.5.9"
+
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+rustix = { version = "1.1.6", features = ["fs"] }
+
+
+[[bench]]
+name = "engine"
+harness = false
 
 [lints]
 workspace = true

@@ -1,6 +1,6 @@
 # Architecture Overview
 
-> **Document Scope:** Reflects the implemented **Stage 00 — Project Foundation** baseline and documents the target architecture for upcoming roadmap stages (`Stage 01` through `Stage 10`). Planned subsystems are explicitly labeled as not yet implemented.
+> **Document Scope:** Reflects the Stage 00 foundation and the Stage 01 native shell. [UI architecture](UI_ARCHITECTURE.md) details the presentation layer. Later roadmap stages describe the target architecture. Planned subsystems are explicitly labeled as not yet implemented.
 
 ---
 
@@ -21,31 +21,31 @@ All workspace crates form a strict **Directed Acyclic Graph (DAG)**. Circular de
 flowchart TD
     app["gitrust-app (binary: gitrust)"]
     ui["gitrust-ui (egui views & theme)"]
-    git["gitrust-git (Git engine boundary — Stage 02)"]
-    storage["gitrust-storage (local config & keychain policy — Stage 03)"]
+    git["gitrust-git (Git inspection & provisioning)"]
+    storage["gitrust-storage (local profile)"]
     providers["gitrust-providers (GitHub/GitLab boundary — Stage 08)"]
     core["gitrust-core (pure state, models & events)"]
 
     app --> ui
     app --> core
-    app -.->|"dev-dependencies (Stage 00 integration tests)"| git
-    app -.->|"dev-dependencies (Stage 00 integration tests)"| storage
-    app -.->|"dev-dependencies (Stage 00 integration tests)"| providers
+    app --> git
+    app --> storage
+    app -.->|"integration tests"| providers
     ui --> core
     git --> core
     storage --> core
     providers --> core
 ```
 
-### Crate Responsibilities and Stage 00 Status
+### Crate Responsibilities
 
-| Crate | Stage 00 Status | Responsibility | External Dependencies (Stage 00) |
+| Crate | Status | Responsibility | External Dependencies |
 | --- | --- | --- | --- |
-| `gitrust-core` | **Implemented (Foundation)** | Pure domain models, metadata, runtime/host diagnostics, `AppState`, and deterministic `AppEvent` reducer. | None (`std` only) |
-| `gitrust-ui` | **Implemented (Provisional)** | Native `egui` views decoupled from OS windowing; headlessly testable via `egui::Context`. Definitive Design System scheduled for **Stage 01**. | `egui` |
-| `gitrust-app` | **Implemented (Foundation)** | Native binary (`gitrust`), CLI flag handling, `eframe` + `wgpu` initialization, Wayland/X11 integration, and clean shutdown lifecycle. | `eframe`, `egui`, `tracing`, `tracing-subscriber` |
-| `gitrust-git` | **Boundary Only (Planned Stage 02)** | Shell-free `GitCommandSpec`, non-UTF-8 `OsString`/`PathBuf` contracts, and operation safety classes. Functional Git CLI engine scheduled for **Stage 02**. | None (`std` only) |
-| `gitrust-storage` | **Boundary Only (Planned Stage 03)** | Storage security baseline prohibiting plaintext credentials and telemetry by default. Persistent config and keychain adapters scheduled for **Stage 03 / Stage 08**. | None (`std` only) |
+| `gitrust-core` | **Implemented** | Pure domain models, workspace actions and snapshots, runtime diagnostics, and the deterministic `AppEvent` reducer. | None (`std` only) |
+| `gitrust-ui` | **Implemented** | Native `egui` shell and design system decoupled from OS windowing and headlessly testable via `egui::Context`. | `gitrust-core`, `egui` |
+| `gitrust-app` | **Stage 03 implementation** | Native entrypoint, workspace coordinator, dialogs and watcher lifecycle. | `gitrust-core`, `gitrust-git`, `gitrust-storage`, `gitrust-ui`, `eframe`, `egui`, `rfd`, `notify`, `crossbeam-channel`, `tracing`, `tracing-subscriber` |
+| `gitrust-git` | **Stage 03 implementation** | Typed Git discovery, local inspection, init and public HTTPS clone. Owns scheduling, subprocess policy and byte-oriented parsing. | `gitrust-core`, `process-wrap`, `tempfile`, `url`, `rustix` (Linux/macOS) |
+| `gitrust-storage` | **Stage 03 implementation** | Versioned preferences and workspace catalog, with native local paths and atomic file replacement. | `gitrust-core`, `directories`, `tempfile` |
 | `gitrust-providers` | **Boundary Only (Planned Stage 08)** | Strict TLS policy contract. GitHub, GitLab, and hosting API clients scheduled for **Stage 08**. | None (`std` only) |
 
 ### Documented Adjustments to the Reference Directory Layout
@@ -53,7 +53,7 @@ flowchart TD
 Per Stage 00 engineering guidelines, two intentional refinements were made relative to the reference directory skeleton:
 
 1. **Workspace Integration Tests (`crates/gitrust-app/tests/` instead of root `tests/`):** Because the root `Cargo.toml` is a **virtual Cargo manifest** (`[workspace]` without a root `[package]`), Cargo only discovers and executes integration tests placed inside member crates (`crates/*/tests/`). Placing `workspace_integration.rs` inside `crates/gitrust-app/tests/` ensures `cargo test --workspace` compiles and executes cross-crate and binary CLI integration tests automatically.
-2. **Deferred Asset and Benchmark Directories (`assets/` and `benches/`):** Empty directories with placeholder files were omitted in Stage 00. Typography and icon assets will be introduced with verified licensing in **Stage 01 (Design System)**, and `criterion` benchmarks (`benches/`) will be introduced alongside real workloads in **Stage 02 (Git Engine)** and **Stage 09 (Security and Performance)**.
+2. **Asset and Benchmark Directories (`assets/` and `benches/`).** Empty directories with placeholder files were omitted in Stage 00. Stage 01 introduces licensed typography in `crates/gitrust-ui/assets` and first-party painted icons. Stage 02 adds an opt-in benchmark harness in `crates/gitrust-git/benches`. Stage 09 can expand measurements based on workloads observed in practice.
 3. **Supply-Chain Policy (`deny.toml`):** Added at the workspace root to enforce MIT-compatible dependency licensing and vulnerability checks in CI.
 
 ---
@@ -68,25 +68,14 @@ Per Stage 00 engineering guidelines, two intentional refinements were made relat
 
 ---
 
-## 4. Planned Git Engine Architecture (Stage 02 Target — Not Yet Implemented)
+## 4. Git Engine Architecture (Stage 02)
 
-### 4.1 Strategy: Git CLI Primary, Gitoxide Evaluable
+System Git supplies the initial implementation behind a typed `gitrust-git` boundary. [ADR-0003](adr/0003-git-cli-initial-integration-strategy.md) records the adapter choice. [ADR-0007](adr/0007-local-git-inspection.md) defines the narrower local-read trust policy.
 
-gitRUST will initially execute operations through the system `git` executable behind an explicit Rust port/adapter boundary in `gitrust-git` (see [`ADR-0003`](adr/0003-git-cli-initial-integration-strategy.md)).
+Discovery and authorization are separate. Allowlisted requests run in a bounded worker pool and return typed models through a completion channel. The engine constructs every command, using the absolute Git executable, discrete native arguments, literal file selectors and a cleared subprocess environment. Machine formats preserve bytes for Git paths and commit content. The engine keeps subprocess supervision and decoding independent of presentation.
 
-Why start with Git CLI:
-- Full behavioral parity with user `.gitconfig`, `includeIf`, SSH agents, GPG/SSH commit signing, Git LFS filters, sparse checkouts, submodules, and worktrees.
-- Battle-tested repository integrity guarantees (`index.lock`, atomic ref updates, packfile verification).
+The canonical common Git directory is the scheduler identity for a working tree and its linked worktrees. Read-only operations may coexist. Reserved write classes require exclusive access with writer ordering. The workspace coordinator consumes engine completion notifications. [Git Engine contract](GIT_ENGINE.md)
 
-Why isolate behind traits for future `gitoxide` (`gix`) evaluation:
-- Pure-Rust read paths (e.g., high-frequency status inspection, commit-graph walking, blame, or diffing) can later be benchmarked and selectively backed by `gix` where compatibility and safety are proven, without rewriting `gitrust-core` or `gitrust-ui`.
+## 5. Workspace coordination (Stage 03)
 
-### 4.2 Mandatory Git Engine Invariants (Stage 02+)
-
-1. **Zero Shell Execution:** Commands are spawned strictly via `std::process::Command` (or async equivalent) using discrete `OsStr` arguments (`GitCommandSpec`). Shell wrappers (`sh -c`, `cmd /C`) are forbidden.
-2. **Option Termination Discipline:** Dynamic revisions and paths are separated with `--` and `--end-of-options` where supported to prevent leading-dash argument injection.
-3. **Non-UTF-8 Path Fidelity:** Repository paths and file entries use `PathBuf`, `OsString`, and raw byte parsers (`--porcelain=v2 -z` NUL-delimited output) rather than assuming UTF-8 filenames.
-4. **Sanitized Subprocess Environment:** Interactive prompts are suppressed (`GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never` unless explicitly routed through an approved credential flow), `LC_ALL=C` is set for deterministic machine parsing where needed, and dangerous config overrides are neutralized via `-c` flags when inspecting untrusted repositories.
-5. **Asynchronous Execution & Safe Cancellation:** Git subprocesses run on background worker tasks communicating with `gitrust-core` via bounded channels (`egui::Context::request_repaint` triggered on completion). Cancellation terminates read-only child processes cleanly; mutating operations respect Git lockfiles and reconcile repository state afterward.
-6. **Per-Repository Write Serialization:** Concurrent read operations may run within bounded concurrency, whereas all mutating operations (`SerializedWrite` / `DestructiveWrite`) acquire an asynchronous per-repository mutex/queue so `gitRUST` never triggers self-inflicted `.git/index.lock` races.
-7. **Explicit Destructive Operation Gating:** Commands capable of discarding uncommitted data or rewriting history (`reset --hard`, `checkout -- <file>`, `clean -fd`, `branch -D`, `push --force-with-lease`) require typed confirmation tokens generated only by explicit user authorization in the UI.
+The shell sends the repository actions defined in gitrust-core to an application-owned coordinator. The coordinator resolves preferences, invokes the typed Git Engine, handles native folder selection, and owns cancellation and refresh. Only immutable presentation data returns to egui. The engine and storage remain independent of the UI. [Repository management](REPOSITORY_MANAGEMENT.md) · [ADR-0008](adr/0008-workspace-management.md)

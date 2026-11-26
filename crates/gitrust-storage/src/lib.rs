@@ -1,18 +1,12 @@
-//! Local configuration and secret-handling policy boundary for `gitRUST`.
-//!
-//! # Stage 00 Status
-//! Persistent on-disk storage and OS keychain adapters are **not implemented** in
-//! Stage 00; local repository/preferences persistence starts in **Stage 03** and
-//! credential hardening is expanded in **Stage 08 / Stage 09**.
-//!
-//! This crate codifies the non-negotiable storage invariants from day one:
-//! - Credentials and tokens must never be written to plaintext configuration files.
-//! - Telemetry is disabled by default.
+//! Local preferences, workspace history and credential-handling policy for gitRUST.
+
+mod persistence;
+pub use persistence::{StorageError, Store};
 
 use gitrust_core::CrateStageStatus;
 
 /// Current implementation readiness of `gitrust-storage`.
-pub const STAGE_STATUS: CrateStageStatus = CrateStageStatus::Planned { target_stage: 3 };
+pub const STAGE_STATUS: CrateStageStatus = CrateStageStatus::Active { stage: 3 };
 
 /// Policy governing how sensitive authentication material may be stored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

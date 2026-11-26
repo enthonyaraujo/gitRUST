@@ -3,7 +3,7 @@
 use std::process::Command;
 
 use gitrust_core::{APP_LICENSE, APP_NAME, AppMetadata, CrateStageStatus, PACKAGE_NAME};
-use gitrust_git::{GitCommandSpec, OperationSafetyClass};
+use gitrust_git::{OperationSafetyClass, Request};
 use gitrust_providers::TlsVerificationPolicy;
 use gitrust_storage::StorageSecurityBaseline;
 
@@ -16,11 +16,11 @@ fn workspace_crates_preserve_stage_00_honesty_and_security_baselines() {
 
     assert_eq!(
         gitrust_git::STAGE_STATUS,
-        CrateStageStatus::Planned { target_stage: 2 }
+        CrateStageStatus::Active { stage: 2 }
     );
     assert_eq!(
         gitrust_storage::STAGE_STATUS,
-        CrateStageStatus::Planned { target_stage: 3 }
+        CrateStageStatus::Active { stage: 3 }
     );
     assert_eq!(
         gitrust_providers::STAGE_STATUS,
@@ -36,13 +36,8 @@ fn workspace_crates_preserve_stage_00_honesty_and_security_baselines() {
         TlsVerificationPolicy::StrictCertificateVerification
     );
 
-    let spec = GitCommandSpec::new(
-        std::env::temp_dir(),
-        "status",
-        ["--porcelain=v2"],
-        OperationSafetyClass::ReadOnly,
-    );
-    assert!(spec.is_ok());
+    let request = Request::Identify(std::env::temp_dir());
+    assert_eq!(request.safety_class(), OperationSafetyClass::ReadOnly);
 }
 
 #[test]
