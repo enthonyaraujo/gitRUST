@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted. [ADR-0007](0007-local-git-inspection.md) defines the implemented Stage 02 scope. Compatibility with user extensions, credential helpers and transports remains a later-stage goal.
 
 ## Context
 

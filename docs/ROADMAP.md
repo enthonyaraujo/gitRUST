@@ -10,7 +10,7 @@ This document defines the staged engineering plan for **gitRUST**. Each stage ha
 | --- | --- | --- | --- |
 | **00** | Project Foundation | Completed and integrated | Yes |
 | **01** | Design System | Completed | Yes |
-| **02** | Git Engine | Planned | Yes |
+| **02** | Git Engine | Implemented on feature branch, pending review and multi-OS CI | Yes |
 | **03** | Repository Management | Planned | Yes |
 | **04** | Changes and Commits | Planned | Yes |
 | **05** | Branches and History | Planned | Yes |
@@ -36,9 +36,10 @@ This document defines the staged engineering plan for **gitRUST**. Each stage ha
 - [Design System](DESIGN_SYSTEM.md), [UI architecture](UI_ARCHITECTURE.md), and [accessibility scope](ACCESSIBILITY.md).
 
 ### Stage 02 — Git Engine
-- Asynchronous, shell-free `git` CLI execution engine in `gitrust-git`.
-- Binary/NUL-delimited output parsers (`status --porcelain=v2 -z`, `diff`, `log`, `branch`, `rev-parse`) preserving non-UTF-8 paths.
-- Per-repository write queue/mutex, safe task cancellation, structured error taxonomy, sanitized environment policy, and isolated temporary-repository integration tests + initial `criterion` benchmarks.
+- Local repository discovery, trust gating and typed, shell-free inspection with system Git 2.45 or newer.
+- Status, two-way diff, paged history and local/remote-tracking branches preserve byte-oriented paths and support SHA-1 and SHA-256.
+- Bounded background concurrency, write reservations by common Git directory, read cancellation, structured errors, temporary-repository tests and opt-in benchmarks.
+- [Git Engine contract](GIT_ENGINE.md)
 
 ### Stage 03 — Repository Management
 - Add existing local repositories, initialize new repositories (`git init`), and clone remote repositories (`git clone` with progress reporting).
@@ -69,7 +70,7 @@ The first public release, **`v0.1.0`**, is planned to encompass **Stages 00 thro
 Advancing to `v0.1.0` requires:
 1. Functional completion of Stages `00`–`06` without mock or partial placeholders.
 2. Passing automated test suites and CI checks across Linux, Windows, and macOS.
-3. Verification of the security invariants defined in [`docs/SECURITY_ARCHITECTURE.md`](SECURITY_ARCHITECTURE.md) (no shell execution, safe untrusted-repo inspection, no plaintext secrets, strict TLS).
+3. Verification of the security invariants defined in [`docs/SECURITY_ARCHITECTURE.md`](SECURITY_ARCHITECTURE.md) (no shell execution, explicit repository trust and local inspection policy, no plaintext secrets, strict TLS).
 4. Meeting stability and responsiveness baselines on real repositories.
 
 ---

@@ -12,6 +12,7 @@ Where upstream crates offer a choice of licenses (`OR` expressions in SPDX), `gi
 
 - **`self_cell` (`1.3.0`):** Published under `Apache-2.0 OR GPL-2.0-only`. `gitRUST` elects **`Apache-2.0`**.
 - **`r-efi` (`6.0.0`, transitive target dependency):** Published under `MIT OR Apache-2.0 OR LGPL-2.1-or-later`. `gitRUST` elects **`MIT`**.
+- **`process-wrap` (`10.0.2`) and Unix transitive `nix` (`0.31.4`):** The Stage 02 process supervisor elects MIT for `process-wrap` and uses `nix` under MIT. The synchronous features wrap Unix process groups and Windows Job Objects. The system Git executable is obtained separately from the host.
 - **All `MIT OR Apache-2.0` / `Zlib OR Apache-2.0 OR MIT` / `Unlicense OR MIT` / `0BSD OR MIT OR Apache-2.0` crates:** Compatible under **`MIT`** (or `Apache-2.0` / `Zlib` / `BSD` permissive terms).
 
 ---
