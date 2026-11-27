@@ -69,6 +69,9 @@ This document defines the staged engineering plan for **gitRUST**. Each stage ha
 - GitHub App Device Flow, Linux Secret Service, repository exploration and account associations.
 - GitHub clone and publication, forks, pull requests, checks and workflow status through the native UI. [GitHub integration](GITHUB_INTEGRATION.md) · [App setup](GITHUB_APP_SETUP.md)
 
+### Stage 07.1 — Native browser authorization
+- Primary GitHub OAuth App login with PKCE, a native Linux callback and isolated GitHub App Device Flow sessions. Real account verification and public credential provisioning remain release criteria. [OAuth App setup](GITHUB_OAUTH_SETUP.md) · [ADR-0013](adr/0013-native-browser-oauth.md)
+
 ### Stage 08 — Cross-Platform Validation
 - Re-enable the Windows and macOS automatic CI matrix. Verify native tests and desktop behavior on Linux, Windows, and macOS.
 - Recheck exclusive repository publication on Windows, the directory picker, graphics, filesystem notifications, signing integrations, and other portability issues against the completed MVP.

@@ -314,3 +314,7 @@ Transfers use the bounded Git worker pool. The supervisor reads only recognized 
 ## Stage 07 GitHub integration
 
 The provider worker sleeps when idle. Device Flow polls only during authorization and follows the server interval. Repository and PR lists are paginated, rendering is virtualized, and CI queries run on demand. API bodies and decoded avatars have independent size limits.
+
+## Stage 07.1 browser authorization
+
+The Linux callback listener blocks on socket events. Pending browser authorization waits for a delivery, a cancellation signal or one expiration deadline. The waiting dialog uses static progress feedback. Network exchange, profile lookup and vault access happen on the worker. Measure the release process across 60 seconds each when disconnected, awaiting a browser callback and connected at rest. Record the server and credential fixture separately from measurements using a real account.

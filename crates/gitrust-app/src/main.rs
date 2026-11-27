@@ -2,6 +2,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod browser_oauth;
 mod github_actor;
 mod ime;
 mod workspaces;
@@ -310,6 +311,7 @@ impl GitRustApp {
         metadata: AppMetadata,
         smoke_test: Option<SmokeTestOptions>,
         ui_options: UiOptions,
+        oauth: Option<browser_oauth::Inbox>,
     ) -> Self {
         let protocol = detect_verified_session_protocol(cc);
         let host = HostDiagnostics::from_protocol(protocol);
@@ -329,7 +331,7 @@ impl GitRustApp {
         let mut view = Desktop::new(&cc.egui_ctx, ui_options);
         let workspaces = (ui_options.diagnostics.is_none() && smoke_test.is_none()).then(|| {
             view.enable_repository_management();
-            workspaces::Workspaces::start(&cc.egui_ctx)
+            workspaces::Workspaces::start(&cc.egui_ctx, oauth)
         });
         let last_preferences = view.preferences();
         let preference_overrides = interactive_preference_overrides(std::env::args_os());
@@ -532,6 +534,22 @@ fn build_native_options(initial_size_override: Option<[f32; 2]>) -> eframe::Nati
 }
 
 fn main() -> ExitCode {
+    let mut arguments = std::env::args_os().skip(1);
+    if arguments
+        .next()
+        .is_some_and(|flag| flag == "--oauth-callback")
+    {
+        if arguments
+            .next()
+            .and_then(|url| url.into_string().ok())
+            .filter(|_| arguments.next().is_none())
+            .is_some_and(|url| browser_oauth::forward(&url))
+        {
+            return ExitCode::SUCCESS;
+        }
+        eprintln!("gitRUST did not accept the browser authorization callback.");
+        return ExitCode::FAILURE;
+    }
     if let Some(code) = gitrust_git::ssh_bridge() {
         return code;
     }
@@ -556,11 +574,31 @@ fn main() -> ExitCode {
         }
         LaunchMode::Interactive(options) => {
             init_logging();
+            let instance = if options.diagnostics.is_some() {
+                None
+            } else {
+                match browser_oauth::start() {
+                    Ok(Some(instance)) => Some(instance),
+                    Ok(None) => return ExitCode::SUCCESS,
+                    Err(_) => {
+                        tracing::warn!("GitHub browser callback is unavailable in this session");
+                        None
+                    }
+                }
+            };
+            #[cfg(target_os = "linux")]
+            let oauth = instance.as_ref().map(browser_oauth::Instance::inbox);
+            #[cfg(not(target_os = "linux"))]
+            let oauth = instance.and(None);
             let native_options = build_native_options(None);
             match eframe::run_native(
                 PACKAGE_NAME,
                 native_options,
-                Box::new(move |cc| Ok(Box::new(GitRustApp::new(cc, metadata, None, options)))),
+                Box::new(move |cc| {
+                    Ok(Box::new(GitRustApp::new(
+                        cc, metadata, None, options, oauth,
+                    )))
+                }),
             ) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(err) => {
@@ -582,6 +620,7 @@ fn main() -> ExitCode {
                         metadata,
                         Some(smoke_opts),
                         options,
+                        None,
                     )))
                 }),
             ) {

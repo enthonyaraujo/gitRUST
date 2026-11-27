@@ -2,10 +2,13 @@ use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 use crossbeam_channel::{Receiver, Sender};
 use gitrust_core::{
-    github::{Account, Action, Connection, DevicePrompt, Notice, RepositoryKey, View},
+    github::{
+        Account, AccountId, Action, AuthMethod, BrowserState, Connection, Notice, RepositoryKey,
+        View,
+    },
     remotes::{Auth, Credential, RemoteAction, RemoteIntent},
 };
-use gitrust_providers::github::{Cancellation, Client, ClientId};
+use gitrust_providers::github::{BrowserAttempt, Cancellation, Client, ClientId};
 use gitrust_storage::CredentialVault;
 
 use crate::workspaces::WorkerEvent;
@@ -15,7 +18,7 @@ use gitrust_providers::github::Session;
 pub(crate) enum Job {
     Action(Action),
     Authorize {
-        account: u64,
+        account: AccountId,
         endpoint: String,
         workspace: PathBuf,
         intent: RemoteIntent,
@@ -30,7 +33,7 @@ pub(crate) enum Effect {
         url: String,
         auth: Auth,
         parent: Option<RepositoryKey>,
-        account: u64,
+        account: AccountId,
     },
     Remote {
         workspace: PathBuf,
@@ -40,7 +43,7 @@ pub(crate) enum Effect {
         workspace: Option<PathBuf>,
         action: RemoteAction,
     },
-    Disconnect(u64),
+    Disconnect(AccountId),
 }
 
 pub(crate) struct Message {
@@ -58,15 +61,28 @@ struct Worker {
     client: Client,
     vault: CredentialVault,
     client_id: Option<ClientId>,
-    sessions: BTreeMap<u64, Saved>,
+    sessions: BTreeMap<AccountId, Saved>,
+    browser_client: Option<ClientId>,
     view: View,
 }
 
-pub(crate) fn run(incoming: &Receiver<(Job, Cancellation)>, updates: &Sender<WorkerEvent>) {
+pub(crate) fn configured_browser_client() -> Option<ClientId> {
+    std::env::var("GITRUST_GITHUB_OAUTH_CLIENT_ID")
+        .ok()
+        .or_else(|| option_env!("GITRUST_GITHUB_OAUTH_CLIENT_ID").map(str::to_owned))
+        .and_then(|value| ClientId::new(&value).ok())
+}
+
+pub(crate) fn run(
+    incoming: &Receiver<(Job, Cancellation)>,
+    updates: &Sender<WorkerEvent>,
+    inbox: Option<&crate::browser_oauth::Inbox>,
+) {
     let mut worker = Worker {
         client: Client::default(),
         vault: CredentialVault,
         client_id: None,
+        browser_client: None,
         sessions: BTreeMap::new(),
         view: View::default(),
     };
@@ -74,17 +90,31 @@ pub(crate) fn run(incoming: &Receiver<(Job, Cancellation)>, updates: &Sender<Wor
         let old = worker.view.active;
         let affected = match &job {
             Job::Authorize { account, .. } => Some(*account),
-            Job::Action(Action::SignIn { reconnect, .. }) => *reconnect,
+            Job::Action(Action::SignIn { reconnect, .. } | Action::BrowserSignIn { reconnect }) => {
+                *reconnect
+            }
             Job::Action(Action::Disconnect(id) | Action::Select(id)) => Some(*id),
             Job::Action(_) => old,
         };
         worker.view.notice = None;
-        let effect = match worker.run(job, &cancel, |prompt| {
-            let _ = updates.send(WorkerEvent::GithubCode(prompt));
-        }) {
-            Ok(effect) => effect,
+        let browser = matches!(job, Job::Action(Action::BrowserSignIn { .. }));
+        worker.view.browser_state = BrowserState::Idle;
+        let effect = match worker.run(job, &cancel, updates, inbox) {
+            Ok(effect) => {
+                if browser {
+                    worker.view.browser_state = BrowserState::Authenticated;
+                }
+                effect
+            }
             Err(error) => {
                 worker.view.notice = Some(error);
+                if browser {
+                    worker.view.browser_state = match error {
+                        Notice::Cancelled => BrowserState::Cancelled,
+                        Notice::Expired => BrowserState::Expired,
+                        _ => BrowserState::Failed,
+                    };
+                }
                 if error == Notice::Reconnect
                     && let Some(saved) = affected.and_then(|id| worker.sessions.get_mut(&id))
                 {
@@ -97,10 +127,18 @@ pub(crate) fn run(incoming: &Receiver<(Job, Cancellation)>, updates: &Sender<Wor
         if old != worker.view.active {
             worker.clear_query();
         }
+        if browser
+            && worker.view.browser_state == BrowserState::Authenticated
+            && let Some(account) = worker.view.active
+        {
+            worker.view.avatar = load_avatar(&worker.client, account.number, &cancel);
+        }
         worker.view.accounts = worker
             .sessions
-            .values()
-            .map(|saved| Account {
+            .iter()
+            .map(|(id, saved)| Account {
+                id: *id,
+                scopes: saved.session.scopes().into(),
                 profile: saved.session.profile(),
                 connection: saved.state,
             })
@@ -133,91 +171,161 @@ impl Worker {
         self.view.avatar = None;
     }
 
-    fn restore(&mut self, client: &str) -> Result<(), Notice> {
-        let id = ClientId::new(client)?;
-        if self.client_id.as_ref() != Some(&id) {
-            self.sessions.clear();
-            self.view.active = None;
-            self.clear_query();
+    fn restore(&mut self, client: &str, method: AuthMethod) -> Result<(), Notice> {
+        if client.is_empty() {
+            return Ok(());
         }
-        self.client_id = Some(id);
-        client.clone_into(&mut self.view.client_id);
-        for (account, data) in self
+        let id = ClientId::new(client)?;
+        let records = self
             .vault
-            .load(client)
-            .map_err(|_| Notice::StorageUnavailable)?
-        {
-            if let Ok(session) = Session::from_vault(account, &data) {
-                self.sessions.entry(account).or_insert(Saved {
-                    session,
-                    state: Connection::Stored,
-                    has_vault: true,
-                });
+            .load(client, method)
+            .map_err(|_| Notice::StorageUnavailable)?;
+        self.set_client(&id, method);
+        for (number, data) in records {
+            let parsed = match method {
+                AuthMethod::Device => Session::from_vault(number, &data),
+                AuthMethod::Browser => Session::from_browser_vault(number, &id, &data),
+            };
+            if let Ok(session) = parsed {
+                self.sessions
+                    .entry(AccountId { number, method })
+                    .or_insert(Saved {
+                        session,
+                        state: Connection::Stored,
+                        has_vault: true,
+                    });
             }
         }
-        self.view.active = self
-            .view
-            .active
-            .or_else(|| self.sessions.keys().next().copied());
+        if self.view.active.is_none() {
+            self.view.active = self.sessions.keys().next().copied();
+        }
         Ok(())
     }
 
-    fn login(
-        &mut self,
-        client: &str,
-        reconnect: Option<u64>,
-        cancel: &Cancellation,
-        prompt: impl FnOnce(DevicePrompt),
-    ) -> Result<(), Notice> {
-        let id = ClientId::new(client)?;
-        let session = self.client.login(&id, cancel, prompt)?;
-        let profile = session.profile();
-        if reconnect.is_some_and(|old| old != profile.id) {
-            return Err(Notice::InvalidInput);
+    fn set_client(&mut self, id: &ClientId, method: AuthMethod) {
+        let (current, public) = match method {
+            AuthMethod::Device => (&mut self.client_id, &mut self.view.client_id),
+            AuthMethod::Browser => (&mut self.browser_client, &mut self.view.browser_client_id),
+        };
+        if current.as_ref() == Some(id) {
+            return;
         }
-        if self.client_id.as_ref() != Some(&id) {
-            self.sessions.clear();
+        *current = Some(id.clone());
+        id.as_str().clone_into(public);
+        self.sessions.retain(|key, _| key.method != method);
+        if self.view.active.is_some_and(|key| key.method == method) {
+            self.view.active = None;
             self.clear_query();
         }
-        client.clone_into(&mut self.view.client_id);
+    }
+
+    fn save_session(
+        &mut self,
+        client: &ClientId,
+        method: AuthMethod,
+        reconnect: Option<AccountId>,
+        session: Session,
+        cancel: &Cancellation,
+    ) -> Result<(), Notice> {
+        let key = AccountId {
+            method,
+            number: session.profile().id,
+        };
+        if reconnect.is_some_and(|old| old != key) {
+            return Err(Notice::WrongAccount);
+        }
+        cancel.check()?;
         let stored = self
             .vault
-            .store(id.as_str(), profile.id, &session.for_vault()?)
+            .store(client.as_str(), method, key.number, &session.for_vault()?)
             .is_ok();
+        if !stored && method == AuthMethod::Browser {
+            return Err(Notice::StorageUnavailable);
+        }
+        self.set_client(client, method);
         let state = if stored {
             Connection::Stored
         } else {
             Connection::Temporary
         };
-        let has_vault = stored
-            || self
-                .sessions
-                .get(&profile.id)
-                .is_some_and(|entry| entry.has_vault);
+        let has_vault = stored || self.sessions.get(&key).is_some_and(|entry| entry.has_vault);
         self.sessions.insert(
-            profile.id,
+            key,
             Saved {
                 session,
                 state,
                 has_vault,
             },
         );
-        self.client_id = Some(id);
-        self.view.active = Some(profile.id);
-        if !stored {
-            self.view.notice = Some(Notice::TemporarySession);
-        }
+        self.view.active = Some(key);
+        self.view.notice = Some(if stored {
+            Notice::SignedIn
+        } else {
+            Notice::TemporarySession
+        });
         Ok(())
     }
 
-    fn authorize(&mut self, account: u64, cancel: &Cancellation) -> Result<(), Notice> {
+    fn browser_login(
+        &mut self,
+        reconnect: Option<AccountId>,
+        cancel: &Cancellation,
+        events: &Sender<WorkerEvent>,
+        inbox: Option<&crate::browser_oauth::Inbox>,
+    ) -> Result<(), Notice> {
+        let notify = |phase, url| {
+            let _ = events.send(WorkerEvent::GithubBrowser(phase, url));
+        };
+        notify(BrowserState::Starting, None);
+        let inbox = inbox.ok_or(Notice::OAuthHandler)?;
+        let client = configured_browser_client().ok_or(Notice::OAuthConfiguration)?;
+        let secret = self
+            .vault
+            .oauth_client_secret(client.as_str())
+            .map_err(|_| Notice::OAuthConfiguration)?;
+        cancel.check()?;
+        crate::browser_oauth::register()?;
+        let attempt = BrowserAttempt::new()?;
+        let url = attempt.authorize_url(&client);
+        let (attempt, callback) = inbox.wait_for(attempt, cancel, || {
+            if !crate::workspaces::launch_browser(&url) {
+                return Err(Notice::OAuthHandler);
+            }
+            notify(BrowserState::AwaitingBrowserAuthorization, Some(url));
+            Ok(())
+        })?;
+        notify(BrowserState::CallbackReceived, None);
+        let session =
+            self.client
+                .exchange_browser(&client, &secret, attempt, callback, cancel, |phase| {
+                    notify(phase, None);
+                })?;
+        self.save_session(&client, AuthMethod::Browser, reconnect, session, cancel)
+    }
+
+    fn authorize(&mut self, account: AccountId, cancel: &Cancellation) -> Result<(), Notice> {
         let saved = self.sessions.get_mut(&account).ok_or(Notice::Reconnect)?;
         if saved.state == Connection::Reconnect {
             return Err(Notice::Reconnect);
         }
         if saved.session.needs_refresh() {
-            let client = self.client_id.as_ref().ok_or(Notice::InvalidClient)?;
-            match self.client.refresh(client, &saved.session, cancel) {
+            let client = match account.method {
+                AuthMethod::Device => self.client_id.as_ref(),
+                AuthMethod::Browser => self.browser_client.as_ref(),
+            }
+            .ok_or(Notice::InvalidClient)?;
+            let refreshed = match account.method {
+                AuthMethod::Device => self.client.refresh(client, &saved.session, cancel),
+                AuthMethod::Browser => {
+                    let secret = self
+                        .vault
+                        .oauth_client_secret(client.as_str())
+                        .map_err(|_| Notice::OAuthConfiguration)?;
+                    self.client
+                        .refresh_browser(client, &secret, &saved.session, cancel)
+                }
+            };
+            match refreshed {
                 Ok(session) => saved.session = session,
                 Err(error) => {
                     if matches!(
@@ -232,23 +340,33 @@ impl Worker {
             if saved.state == Connection::Stored
                 && self
                     .vault
-                    .store(client.as_str(), account, &saved.session.for_vault()?)
+                    .store(
+                        client.as_str(),
+                        account.method,
+                        account.number,
+                        &saved.session.for_vault()?,
+                    )
                     .is_err()
             {
                 saved.state = Connection::Temporary;
                 self.view.notice = Some(Notice::TemporarySession);
             }
         }
+        saved.session.check_access()?;
         Ok(())
     }
 
-    fn disconnect(&mut self, account: u64) -> Result<(), Notice> {
+    fn disconnect(&mut self, account: AccountId) -> Result<(), Notice> {
         let entry = self.sessions.get(&account).ok_or(Notice::Reconnect)?;
+        let client = match account.method {
+            AuthMethod::Device => &self.client_id,
+            AuthMethod::Browser => &self.browser_client,
+        };
         if entry.has_vault
-            && let Some(client) = &self.client_id
+            && let Some(client) = client
         {
             self.vault
-                .remove(client.as_str(), account)
+                .remove(client.as_str(), account.method, account.number)
                 .map_err(|_| Notice::StorageUnavailable)?;
         }
         self.sessions.remove(&account);
@@ -263,7 +381,8 @@ impl Worker {
         &mut self,
         job: Job,
         cancel: &Cancellation,
-        show: impl FnOnce(DevicePrompt),
+        events: &Sender<WorkerEvent>,
+        inbox: Option<&crate::browser_oauth::Inbox>,
     ) -> Result<Effect, Notice> {
         cancel.check()?;
         let action = match job {
@@ -286,7 +405,7 @@ impl Worker {
                     }
                     return Err(error);
                 }
-                let auth = scoped(endpoint, saved.session.access());
+                let auth = scoped(endpoint, account.method, saved.session.access());
                 match &mut intent.action {
                     RemoteAction::Fetch(_, current)
                     | RemoteAction::Pull(_, _, current)
@@ -298,11 +417,24 @@ impl Worker {
             Job::Action(action) => action,
         };
         match action {
-            Action::Restore(client) => self.restore(&client)?,
+            Action::Restore { device, browser } => {
+                let browser = self.restore(&browser, AuthMethod::Browser);
+                let device = self.restore(&device, AuthMethod::Device);
+                browser.and(device)?;
+            }
+            Action::BrowserSignIn { reconnect } => {
+                self.browser_login(reconnect, cancel, events, inbox)?;
+            }
             Action::SignIn {
                 client_id,
                 reconnect,
-            } => self.login(&client_id, reconnect, cancel, show)?,
+            } => {
+                let id = ClientId::new(&client_id)?;
+                let session = self.client.login(&id, cancel, |prompt| {
+                    let _ = events.send(WorkerEvent::GithubCode(prompt));
+                })?;
+                self.save_session(&id, AuthMethod::Device, reconnect, session, cancel)?;
+            }
             Action::Select(id) => {
                 if !self.sessions.contains_key(&id) {
                     return Err(Notice::Reconnect);
@@ -328,16 +460,17 @@ impl Worker {
         self.authorize(account, cancel)?;
         let entry = self.sessions.get(&account).ok_or(Notice::Reconnect)?;
         let token = entry.session.access();
+        let device = account.method == AuthMethod::Device;
         let profile = entry.session.profile();
         let client = &self.client;
         match action {
             Action::Refresh => {
                 let current = client.profile(token, cancel)?;
-                if current.id != account {
+                if current.id != account.number {
                     return Err(Notice::Reconnect);
                 }
                 let mut organizations = Vec::new();
-                for page in 1..=10 {
+                for page in (1..=10).filter(|_| device) {
                     let result = client.installations(token, page, cancel)?;
                     organizations.extend(result.items);
                     if result.next.is_none() {
@@ -348,15 +481,16 @@ impl Worker {
                 let repositories = client.repositories(token, None, 1, cancel)?;
                 self.view.repositories = repositories.items.into();
                 self.view.repository_page = repositories.next;
-                self.view.avatar = load_avatar(client, account, cancel);
+                self.view.avatar = load_avatar(client, account.number, cancel);
             }
             Action::Repositories { installation, page } => {
                 if installation.is_some_and(|id| {
-                    !self
-                        .view
-                        .organizations
-                        .iter()
-                        .any(|org| org.installation == id)
+                    !device
+                        || !self
+                            .view
+                            .organizations
+                            .iter()
+                            .any(|org| org.installation == id)
                 }) {
                     return Err(Notice::NoAccess);
                 }
@@ -388,7 +522,7 @@ impl Worker {
                 let auth = if ssh || !repo.private {
                     Auth::default()
                 } else {
-                    scoped(url.clone(), token)
+                    scoped(url.clone(), account.method, token)
                 };
                 return Ok(Effect::Clone {
                     destination,
@@ -400,7 +534,8 @@ impl Worker {
             }
             Action::Create(plan) => {
                 let organization = !profile.login.eq_ignore_ascii_case(&plan.owner);
-                if organization
+                if device
+                    && organization
                     && !self
                         .view
                         .organizations
@@ -413,25 +548,27 @@ impl Worker {
                 self.view.result = Some(created.key.clone());
                 self.view.notice = Some(Notice::Created);
                 if let Some(publish) = plan.local {
-                    return self.publish(token, &created.key, publish, cancel);
+                    return self.publish(token, device, &created.key, publish, cancel);
                 }
             }
             Action::ResumePublish {
                 repository,
                 publish,
-            } => return self.publish(token, &repository, publish, cancel),
+            } => return self.publish(token, device, &repository, publish, cancel),
             Action::Fork {
                 repository,
                 organization,
                 name,
             } => {
-                if organization.as_ref().is_some_and(|owner| {
-                    !self
-                        .view
-                        .organizations
-                        .iter()
-                        .any(|org| org.login.eq_ignore_ascii_case(owner))
-                }) {
+                if device
+                    && organization.as_ref().is_some_and(|owner| {
+                        !self
+                            .view
+                            .organizations
+                            .iter()
+                            .any(|org| org.login.eq_ignore_ascii_case(owner))
+                    })
+                {
                     return Err(Notice::NoAccess);
                 }
                 let expected =
@@ -499,7 +636,7 @@ impl Worker {
                     action: RemoteAction::CheckoutReview {
                         revision: pull.revision,
                         branch: local,
-                        auth: scoped(endpoint.clone(), token),
+                        auth: scoped(endpoint.clone(), account.method, token),
                         endpoint,
                     },
                 });
@@ -535,6 +672,7 @@ impl Worker {
     fn publish(
         &self,
         token: &str,
+        device: bool,
         repo: &RepositoryKey,
         local: gitrust_core::github::Publish,
         cancel: &Cancellation,
@@ -543,14 +681,18 @@ impl Worker {
             .client
             .repository(token, repo, cancel)
             .map_err(|error| {
-                if matches!(error, Notice::Forbidden | Notice::NoAccess) {
+                if device && matches!(error, Notice::Forbidden | Notice::NoAccess) {
                     Notice::AwaitingInstallation
                 } else {
                     error
                 }
             })?;
         if !confirmed.can_push {
-            return Err(Notice::AwaitingInstallation);
+            return Err(if device {
+                Notice::AwaitingInstallation
+            } else {
+                Notice::Forbidden
+            });
         }
         let url = confirmed.key.https();
         Ok(Effect::Mutate {
@@ -558,16 +700,25 @@ impl Worker {
             action: RemoteAction::Publish {
                 remote: local.remote,
                 branch: local.branch,
-                auth: scoped(url.clone(), token),
+                auth: scoped(
+                    url.clone(),
+                    if device {
+                        AuthMethod::Device
+                    } else {
+                        AuthMethod::Browser
+                    },
+                    token,
+                ),
                 url,
             },
         })
     }
 }
 
-fn scoped(endpoint: String, token: &str) -> Auth {
+fn scoped(endpoint: String, method: AuthMethod, token: &str) -> Auth {
     Auth {
         credential: Credential::ScopedToken {
+            method,
             endpoint,
             secret: token.into(),
         },
@@ -595,4 +746,47 @@ fn load_avatar(
         rgba: rgba.into_raw(),
     };
     Some(std::sync::Arc::new(avatar))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reconnect_rejects_a_different_account_or_method_before_persistence() {
+        let mut worker = Worker {
+            client: Client::default(),
+            vault: CredentialVault,
+            client_id: None,
+            browser_client: None,
+            sessions: BTreeMap::new(),
+            view: View::default(),
+        };
+        let client = ClientId::new("fixtureOAuthClient").expect("public fixture");
+        let token = br#"{"account":42,"login":"fixture","access":"fixture-access","browser_client":"fixtureOAuthClient","scopes":["repo","read:user"]}"#;
+        for expected in [
+            AccountId {
+                method: AuthMethod::Browser,
+                number: 9,
+            },
+            AccountId {
+                method: AuthMethod::Device,
+                number: 42,
+            },
+        ] {
+            let session = Session::from_browser_vault(42, &client, token).expect("test account");
+            assert_eq!(
+                worker.save_session(
+                    &client,
+                    AuthMethod::Browser,
+                    Some(expected),
+                    session,
+                    &Cancellation::default(),
+                ),
+                Err(Notice::WrongAccount)
+            );
+            assert!(worker.sessions.is_empty());
+            assert!(worker.view.active.is_none());
+        }
+    }
 }

@@ -1,23 +1,36 @@
 use std::{
     fmt,
-    sync::{Arc, Condvar, Mutex},
+    sync::{Arc, Mutex},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use gitrust_core::github::{DevicePrompt, Notice, Profile};
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded};
+use gitrust_core::github::{BrowserState, DevicePrompt, Notice, Profile};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::Client;
+use super::{BrowserAttempt, Callback, Client, REDIRECT_URI};
 
-#[derive(Clone, Debug, Default)]
-pub struct Cancellation(Arc<(Mutex<bool>, Condvar)>);
+#[derive(Clone, Debug)]
+pub struct Cancellation {
+    sender: Arc<Mutex<Option<Sender<()>>>>,
+    receiver: Receiver<()>,
+}
+
+impl Default for Cancellation {
+    fn default() -> Self {
+        let (sender, receiver) = bounded(0);
+        Self {
+            sender: Arc::new(Mutex::new(Some(sender))),
+            receiver,
+        }
+    }
+}
 
 impl Cancellation {
     pub fn cancel(&self) {
-        if let Ok(mut value) = self.0.0.lock() {
-            *value = true;
-            self.0.1.notify_all();
+        if let Ok(mut sender) = self.sender.lock() {
+            sender.take();
         }
     }
 
@@ -25,17 +38,15 @@ impl Cancellation {
         self.wait(Duration::ZERO)
     }
 
+    #[must_use]
+    pub fn signal(&self) -> &Receiver<()> {
+        &self.receiver
+    }
+
     pub fn wait(&self, duration: Duration) -> Result<(), Notice> {
-        let value = self.0.0.lock().map_err(|_| Notice::Cancelled)?;
-        let (value, _) = self
-            .0
-            .1
-            .wait_timeout_while(value, duration, |cancelled| !*cancelled)
-            .map_err(|_| Notice::Cancelled)?;
-        if *value {
-            Err(Notice::Cancelled)
-        } else {
-            Ok(())
+        match self.receiver.recv_timeout(duration) {
+            Err(RecvTimeoutError::Timeout) => Ok(()),
+            _ => Err(Notice::Cancelled),
         }
     }
 }
@@ -84,6 +95,7 @@ struct TokenReply {
     refresh_token_expires_in: Option<u64>,
     error: Option<String>,
     interval: Option<u64>,
+    scope: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -95,6 +107,10 @@ pub struct Session {
     refresh: Option<String>,
     expires: Option<u64>,
     refresh_expires: Option<u64>,
+    #[serde(default)]
+    browser_client: Option<String>,
+    #[serde(default)]
+    scopes: Vec<String>,
 }
 
 impl fmt::Debug for Session {
@@ -123,6 +139,8 @@ impl Session {
             refresh_expires: reply
                 .refresh_token_expires_in
                 .map(|time| now.saturating_add(time)),
+            browser_client: None,
+            scopes: parse_scopes(reply.scope.as_deref()),
         })
     }
 
@@ -147,8 +165,33 @@ impl Session {
     }
 
     pub fn from_vault(account: u64, bytes: &[u8]) -> Result<Self, Notice> {
+        Self::restore(account, None, bytes)
+    }
+
+    pub fn from_browser_vault(
+        account: u64,
+        client: &ClientId,
+        bytes: &[u8],
+    ) -> Result<Self, Notice> {
+        Self::restore(account, Some(client.as_str()), bytes)
+    }
+
+    pub fn check_access(&self) -> Result<(), Notice> {
+        if self.browser_client.is_some() {
+            check_scopes(&self.scopes)?;
+        }
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn scopes(&self) -> &[String] {
+        &self.scopes
+    }
+
+    fn restore(account: u64, browser_client: Option<&str>, bytes: &[u8]) -> Result<Self, Notice> {
         let record: Self = serde_json::from_slice(bytes).map_err(|_| Notice::StorageUnavailable)?;
         if record.account != account
+            || record.browser_client.as_deref() != browser_client
             || !valid_token(&record.access)
             || gitrust_core::github::RepositoryKey::new(&record.login, "profile").is_none()
         {
@@ -161,6 +204,27 @@ impl Session {
     pub fn for_vault(&self) -> Result<Vec<u8>, Notice> {
         serde_json::to_vec(self).map_err(|_| Notice::StorageUnavailable)
     }
+}
+
+fn parse_scopes(value: Option<&str>) -> Vec<String> {
+    value
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|scope| !scope.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn check_scopes(scopes: &[String]) -> Result<(), Notice> {
+    if !scopes.iter().any(|scope| scope == "repo")
+        || !scopes
+            .iter()
+            .any(|scope| matches!(scope.as_str(), "read:user" | "user"))
+    {
+        return Err(Notice::InsufficientScope);
+    }
+    Ok(())
 }
 
 fn valid_token(token: &str) -> bool {
@@ -255,9 +319,85 @@ impl Client {
         }
     }
 
+    pub fn exchange_browser(
+        &self,
+        client: &ClientId,
+        secret: &str,
+        attempt: BrowserAttempt,
+        callback: Callback,
+        stop: &Cancellation,
+        progress: impl Fn(BrowserState),
+    ) -> Result<Session, Notice> {
+        stop.check()?;
+        let (code, verifier) = attempt.exchange_parts(callback)?;
+        progress(BrowserState::ExchangingCode);
+        let reply = self
+            .request::<TokenReply>(
+                self.oauth,
+                "/login/oauth/access_token",
+                Some(json!({
+                    "client_id": client.as_str(),
+                    "client_secret": secret,
+                    "code": code,
+                    "code_verifier": verifier,
+                    "redirect_uri": REDIRECT_URI,
+                    "grant_type": "authorization_code",
+                })),
+                None,
+                stop,
+            )?
+            .body;
+        if let Some(error) = reply.error.as_deref() {
+            return Err(match oauth_error(Some(error)) {
+                Notice::InvalidClient => Notice::OAuthConfiguration,
+                notice => notice,
+            });
+        }
+        let scopes = parse_scopes(reply.scope.as_deref());
+        check_scopes(&scopes)?;
+        let access = reply
+            .access_token
+            .as_deref()
+            .filter(|token| valid_token(token))
+            .ok_or(Notice::InvalidResponse)?;
+        stop.check()?;
+        progress(BrowserState::FetchingProfile);
+        let profile = self.profile(access, stop)?;
+        stop.check()?;
+        let mut session = Session::from_reply(profile, reply)?;
+        session.browser_client = Some(client.as_str().into());
+        Ok(session)
+    }
+
+    pub fn refresh_browser(
+        &self,
+        client: &ClientId,
+        secret: &str,
+        current: &Session,
+        stop: &Cancellation,
+    ) -> Result<Session, Notice> {
+        if current.browser_client.as_deref() != Some(client.as_str()) {
+            return Err(Notice::Reconnect);
+        }
+        self.rotate(client, Some(secret), current, stop)
+    }
+
     pub fn refresh(
         &self,
         client_id: &ClientId,
+        current: &Session,
+        stop: &Cancellation,
+    ) -> Result<Session, Notice> {
+        if current.browser_client.is_some() {
+            return Err(Notice::Reconnect);
+        }
+        self.rotate(client_id, None, current, stop)
+    }
+
+    fn rotate(
+        &self,
+        client_id: &ClientId,
+        secret: Option<&str>,
         current: &Session,
         stop: &Cancellation,
     ) -> Result<Session, Notice> {
@@ -269,15 +409,37 @@ impl Client {
         if current.refresh_expires.is_some_and(|at| at <= unix_time()) {
             return Err(Notice::Reconnect);
         }
-        let reply = self.request::<TokenReply>(self.oauth, "/login/oauth/access_token",
-            Some(json!({"client_id": client_id.as_str(), "grant_type": "refresh_token", "refresh_token": refresh})),
-            None, stop)?.body;
+        let mut params = json!({
+            "client_id": client_id.as_str(),
+            "grant_type": "refresh_token",
+            "refresh_token": refresh,
+        });
+        if let Some(secret) = secret {
+            params["client_secret"] = json!(secret);
+        }
+        let reply = self
+            .request::<TokenReply>(
+                self.oauth,
+                "/login/oauth/access_token",
+                Some(params),
+                None,
+                stop,
+            )?
+            .body;
         if let Some(error) = reply.error.as_deref() {
             return Err(oauth_error(Some(error)));
         }
         // The previous refresh token has already rotated. Return the replacement
         // pair for immediate vault persistence before making another network call.
-        Session::from_reply(current.profile(), reply)
+        let retain_scopes = reply.scope.is_none();
+        let mut replacement = Session::from_reply(current.profile(), reply)?;
+        replacement
+            .browser_client
+            .clone_from(&current.browser_client);
+        if retain_scopes {
+            replacement.scopes.clone_from(&current.scopes);
+        }
+        Ok(replacement)
     }
 }
 

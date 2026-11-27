@@ -5,7 +5,7 @@ use std::{
 
 use crossbeam_channel::Sender;
 use gitrust_core::{
-    github::{Action, DevicePrompt, Notice, RepositoryKey, View},
+    github::{AccountId, Action, BrowserState, DevicePrompt, Notice, RepositoryKey, View},
     remotes::{RemoteAction, RemoteIntent, RemoteNotice},
     workspaces::Checkout,
 };
@@ -17,7 +17,7 @@ use crate::github_actor::{self, Effect, Job, Message};
 
 struct CloneResult {
     destination: PathBuf,
-    account: u64,
+    account: AccountId,
     parent: Option<RepositoryKey>,
 }
 
@@ -29,15 +29,44 @@ pub(super) struct State {
     before: Option<(PathBuf, u64)>,
     cloned: Option<CloneResult>,
     git_write: bool,
+    profile_read_failed: bool,
+    inbox: Option<crate::browser_oauth::Inbox>,
+    browser_url: Option<String>,
 }
 
 impl Coordinator {
-    pub(super) fn initialize_github(&mut self) {
-        if let Some(store) = &self.store
-            && let Ok((client, bindings)) = store.load_github()
+    pub(super) fn initialize_github(&mut self, inbox: Option<crate::browser_oauth::Inbox>) {
+        self.github.inbox = inbox;
+        if let Some(store) = &self.store {
+            if let Ok((device, browser, bindings)) = store.load_github() {
+                self.view.github.client_id = device;
+                self.view.github.browser_client_id = browser;
+                self.github.bindings = bindings;
+            } else {
+                self.github.profile_read_failed = true;
+                self.view.github.notice = Some(Notice::StorageUnavailable);
+            }
+        }
+        if self.view.github.browser_client_id.is_empty()
+            && let Some(id) = github_actor::configured_browser_client()
         {
-            self.view.github.client_id = client;
-            self.github.bindings = bindings;
+            self.view.github.browser_client_id = id.as_str().into();
+        }
+    }
+
+    pub(super) fn github_browser(&mut self, phase: BrowserState, url: Option<String>) {
+        if self
+            .github
+            .cancellation
+            .as_ref()
+            .is_none_or(|cancel| cancel.check().is_err())
+        {
+            return;
+        }
+        self.view.github.browser_state = phase;
+        self.github.browser_url = url;
+        if phase == BrowserState::CallbackReceived {
+            self.wake.send_viewport_cmd(egui::ViewportCommand::Focus);
         }
     }
 
@@ -140,8 +169,30 @@ impl Coordinator {
         match action {
             Action::Open(url) => open_browser(&url),
             Action::Cancel => self.cancel_github(),
+            Action::ReopenBrowser => {
+                if self.view.github.browser_state == BrowserState::AwaitingBrowserAuthorization
+                    && let Some(url) = &self.github.browser_url
+                    && !launch_browser(url)
+                {
+                    self.view.github.notice = Some(Notice::OAuthHandler);
+                }
+            }
+            Action::BrowserSignIn { reconnect } => {
+                if self.github.inbox.is_none() {
+                    self.view.github.notice = Some(Notice::OAuthHandler);
+                } else if github_actor::configured_browser_client()
+                    .is_none_or(|id| id.as_str() != self.view.github.browser_client_id)
+                {
+                    self.view.github.notice = Some(Notice::OAuthConfiguration);
+                } else {
+                    self.submit_github(Job::Action(Action::BrowserSignIn { reconnect }));
+                }
+            }
             Action::Bind(path, account) => self.bind_github(&path, account),
-            Action::Restore(ref client) if client.is_empty() => {}
+            Action::Restore { .. } => self.submit_github(Job::Action(Action::Restore {
+                device: self.view.github.client_id.clone(),
+                browser: self.view.github.browser_client_id.clone(),
+            })),
             Action::Create(plan)
                 if plan.local.as_ref().is_some_and(|local| {
                     !self.valid_publish(local, RepositoryKey::new(&plan.owner, &plan.name).as_ref())
@@ -215,7 +266,7 @@ impl Coordinator {
             && self.pending.is_none()
     }
 
-    fn bind_github(&mut self, path: &Path, account: Option<u64>) {
+    fn bind_github(&mut self, path: &Path, account: Option<AccountId>) {
         if self.view.github.workspace.as_deref() != Some(path) || self.github.cancellation.is_some()
         {
             return;
@@ -226,7 +277,7 @@ impl Coordinator {
                 .github
                 .accounts
                 .iter()
-                .any(|account| account.profile.id == id)
+                .any(|account| account.id == id)
             {
                 self.view.github.notice = Some(Notice::Reconnect);
                 return;
@@ -240,11 +291,17 @@ impl Coordinator {
     }
 
     fn save_github(&mut self) {
-        if self.store.as_ref().is_none_or(|store| {
-            store
-                .save_github(&self.view.github.client_id, &self.github.bindings)
-                .is_err()
-        }) {
+        if self.github.profile_read_failed
+            || self.store.as_ref().is_none_or(|store| {
+                store
+                    .save_github(
+                        &self.view.github.client_id,
+                        &self.view.github.browser_client_id,
+                        &self.github.bindings,
+                    )
+                    .is_err()
+            })
+        {
             self.view.github.notice = Some(Notice::StorageUnavailable);
         }
     }
@@ -256,9 +313,10 @@ impl Coordinator {
         if self.github.worker.is_none() {
             let (sender, incoming) = crossbeam_channel::bounded(1);
             let events = self.events.clone();
+            let inbox = self.github.inbox.clone();
             if thread::Builder::new()
                 .name("gitrust-github".into())
-                .spawn(move || github_actor::run(&incoming, &events))
+                .spawn(move || github_actor::run(&incoming, &events, inbox.as_ref()))
                 .is_err()
             {
                 self.view.github.notice = Some(Notice::Unavailable);
@@ -295,10 +353,14 @@ impl Coordinator {
             .is_some_and(|flag| flag.check().is_err());
         let before = self.github.before.take();
         let previous_client = self.view.github.client_id.clone();
+        self.github.browser_url = None;
         let previous_view = std::mem::replace(&mut self.view.github, result.view);
         self.view.github.local_repositories = previous_view.local_repositories;
         self.view.github.workspace = previous_view.workspace;
         self.view.github.workspace_repo = previous_view.workspace_repo;
+        if self.view.github.browser_client_id.is_empty() {
+            self.view.github.browser_client_id = previous_view.browser_client_id;
+        }
         self.sync_github_workspace();
         if self.view.github.client_id.is_empty() {
             self.view.github.client_id.clone_from(&previous_client);
@@ -440,12 +502,16 @@ fn present_device_code(
 }
 
 fn open_browser(url: &str) {
+    if gitrust_providers::github::browser_url_allowed(url) {
+        launch_browser(url);
+    }
+}
+
+// The only query-bearing URL is generated from the private in-flight OAuth attempt.
+pub(crate) fn launch_browser(url: &str) -> bool {
     #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     use std::process::{Command, Stdio};
 
-    if !gitrust_providers::github::browser_url_allowed(url) {
-        return;
-    }
     #[cfg(target_os = "linux")]
     let mut command = {
         let mut command = Command::new("/usr/bin/gio");
@@ -464,7 +530,7 @@ fn open_browser(url: &str) {
             .map(PathBuf::from)
             .filter(|root| root.is_absolute())
         else {
-            return;
+            return false;
         };
         Command::new(root.join("explorer.exe"))
     };
@@ -477,7 +543,9 @@ fn open_browser(url: &str) {
         .spawn()
     {
         let _ = thread::Builder::new().spawn(move || child.wait());
+        return true;
     }
+    false
 }
 
 #[cfg(test)]

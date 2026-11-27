@@ -1355,6 +1355,7 @@ dependencies = [
  "image",
  "notify",
  "rfd",
+ "rustix 1.1.6",
  "tempfile",
  "tracing",
  "tracing-subscriber",
@@ -1379,10 +1380,16 @@ dependencies = [
 name = "gitrust-providers"
 version = "0.1.0-alpha.0"
 dependencies = [
+ "base64",
+ "crossbeam-channel",
+ "form_urlencoded",
+ "getrandom 0.4.3",
  "gitrust-core",
  "rustls-native-certs",
  "serde",
  "serde_json",
+ "sha2",
+ "subtle",
  "ureq",
 ]
 

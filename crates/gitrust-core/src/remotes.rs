@@ -11,6 +11,7 @@ pub enum Credential {
     SecretService,
     LinkedAccount,
     ScopedToken {
+        method: crate::github::AuthMethod,
         endpoint: String,
         secret: String,
     },

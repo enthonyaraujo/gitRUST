@@ -227,13 +227,21 @@ impl Network {
                 return Err(GitError::Remote(RemoteNotice::Authentication));
             }
             Credential::ScopedToken {
+                method,
                 endpoint: approved,
                 secret,
             } => {
                 if auth.ca.is_some() || approved != endpoint.as_str() {
                     return Err(GitError::Remote(RemoteNotice::Authentication));
                 }
-                self.basic_auth("x-access-token", secret)?;
+                match method {
+                    gitrust_core::github::AuthMethod::Device => {
+                        self.basic_auth("x-access-token", secret)?;
+                    }
+                    gitrust_core::github::AuthMethod::Browser => {
+                        self.basic_auth(secret, "x-oauth-basic")?;
+                    }
+                }
             }
             Credential::Password { user, secret } => self.basic_auth(user, secret)?,
         }
@@ -490,11 +498,53 @@ mod scoped_token_tests {
     use super::*;
 
     #[test]
+    fn browser_oauth_uses_token_as_basic_user_for_approved_git_endpoint() {
+        let url = "https://github.com/example/test.git";
+        let endpoint = RemoteEndpoint::new(url).expect("authorized HTTPS");
+        let auth = Auth {
+            credential: Credential::ScopedToken {
+                method: gitrust_core::github::AuthMethod::Browser,
+                endpoint: url.into(),
+                secret: "fixture-oauth-token".into(),
+            },
+            ..Auth::default()
+        };
+        let prepared = Network::prepare(&endpoint, &auth, None).expect("scoped transport");
+        let header = format!(
+            "Authorization: Basic {}",
+            base64(b"fixture-oauth-token:x-oauth-basic")
+        );
+        assert!(
+            prepared
+                .env
+                .iter()
+                .any(|(key, value)| *key == "GITRUST_HTTP_AUTH" && value == header.as_str())
+        );
+        assert!(!format!("{auth:?}").contains("fixture-oauth-token"));
+        assert!(
+            prepared
+                .options
+                .iter()
+                .all(|value| !value.to_string_lossy().contains("fixture-oauth-token"))
+        );
+        assert!(
+            Network::prepare(
+                &RemoteEndpoint::new("https://github.com/example/other.git")
+                    .expect("other repository"),
+                &auth,
+                None
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn provider_header_is_scoped_and_its_value_never_enters_arguments() {
         let url = "https://github.com/example/test.git";
         let endpoint = RemoteEndpoint::new(url).expect("authorized HTTPS");
         let auth = Auth {
             credential: Credential::ScopedToken {
+                method: gitrust_core::github::AuthMethod::Device,
                 endpoint: url.into(),
                 secret: "fixture-only".into(),
             },

@@ -79,3 +79,7 @@ The native Remote selector displays the selected endpoint and the upstream, with
 ## Stage 07 GitHub workspace
 
 Accounts, repositories and pull requests use egui controls and provider snapshots without credential material. Explicit user actions start provider work. Native browser and file-picker actions are separate from the rendering loop. [GitHub integration](GITHUB_INTEGRATION.md)
+
+## Stage 07.1 browser authorization
+
+Welcome and Accounts share native OAuth controls. The pending dialog shows progress, browser reopening and cancellation. The coordinator receives typed progress from the provider worker and requests viewport focus after callback receipt. The signed-in account row identifies the method and opens its corresponding management flow. Device Flow is explicit under Accounts.

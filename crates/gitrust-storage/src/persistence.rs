@@ -6,8 +6,9 @@ use std::{
 };
 
 use directories::ProjectDirs;
-use gitrust_core::workspaces::{
-    Appearance, Locale, MAX_RECENT_REPOSITORIES, Preferences, RecentRepositories,
+use gitrust_core::{
+    github::{AccountId, AuthMethod},
+    workspaces::{Appearance, Locale, MAX_RECENT_REPOSITORIES, Preferences, RecentRepositories},
 };
 
 const MAGIC: &[u8; 4] = b"GTRS";
@@ -56,13 +57,24 @@ impl From<io::Error> for StorageError {
 }
 
 /// Public numeric account associations keyed by canonical local workspace path.
-pub type GithubBindings = std::collections::BTreeMap<PathBuf, u64>;
+pub type GithubBindings = std::collections::BTreeMap<PathBuf, AccountId>;
 
 fn valid_client(client: &str) -> bool {
     client.len() <= 100
         && client
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
+fn take_client(input: &mut &[u8]) -> Result<String, StorageError> {
+    let size = usize::from(take_u16(input)?);
+    let (client, tail) = input.split_at_checked(size).ok_or(StorageError::Invalid)?;
+    *input = tail;
+    let client = std::str::from_utf8(client).map_err(|_| StorageError::Invalid)?;
+    if !valid_client(client) {
+        return Err(StorageError::Invalid);
+    }
+    Ok(client.to_owned())
 }
 
 fn push_github_path(output: &mut Vec<u8>, bytes: &[u8]) -> Result<(), StorageError> {
@@ -192,62 +204,90 @@ impl Store {
         write_atomic(&self.preferences, &bytes)
     }
 
-    /// Read the public GitHub client ID and workspace account associations.
+    /// Read public client identifiers and method-specific workspace associations.
     ///
     /// # Errors
-    /// Rejects malformed data.
-    pub fn load_github(&self) -> Result<(String, GithubBindings), StorageError> {
+    /// Rejects malformed data and unsupported versions.
+    pub fn load_github(&self) -> Result<(String, String, GithubBindings), StorageError> {
         let Some(bytes) = read(&self.recent.with_file_name("github.bin"))? else {
-            return Ok((String::new(), GithubBindings::new()));
+            return Ok((String::new(), String::new(), GithubBindings::new()));
         };
-        let mut input = body(&bytes, b'G')?;
-        let size = usize::from(take_u16(&mut input)?);
-        let (client, tail) = input.split_at_checked(size).ok_or(StorageError::Invalid)?;
-        let client = std::str::from_utf8(client).map_err(|_| StorageError::Invalid)?;
-        if !valid_client(client) {
-            return Err(StorageError::Invalid);
-        }
-        input = tail;
+        // G is the original Device Flow-only record. H adds the browser client and method.
+        let legacy = bytes.get(6) == Some(&b'G');
+        let mut input = body(&bytes, if legacy { b'G' } else { b'H' })?;
+        let device = take_client(&mut input)?;
+        let browser = if legacy {
+            String::new()
+        } else {
+            take_client(&mut input)?
+        };
         let count = usize::from(take_u16(&mut input)?);
         let mut bindings = GithubBindings::new();
         for _ in 0..count {
             let size = usize::from(take_u16(&mut input)?);
             let (path, tail) = input.split_at_checked(size).ok_or(StorageError::Invalid)?;
             let path = decode_path(path)?;
-            let (id, tail) = tail.split_at_checked(8).ok_or(StorageError::Invalid)?;
-            let id = u64::from_le_bytes(id.try_into().map_err(|_| StorageError::Invalid)?);
-            if !path.is_absolute() || id == 0 || bindings.insert(path, id).is_some() {
+            let (number, tail) = tail.split_at_checked(8).ok_or(StorageError::Invalid)?;
+            let number = u64::from_le_bytes(number.try_into().map_err(|_| StorageError::Invalid)?);
+            input = tail;
+            let method = if legacy {
+                AuthMethod::Device
+            } else {
+                let (tag, rest) = input.split_first().ok_or(StorageError::Invalid)?;
+                input = rest;
+                match tag {
+                    0 => AuthMethod::Device,
+                    1 if !browser.is_empty() => AuthMethod::Browser,
+                    _ => return Err(StorageError::Invalid),
+                }
+            };
+            if !path.is_absolute()
+                || number == 0
+                || bindings
+                    .insert(path, AccountId { method, number })
+                    .is_some()
+            {
                 return Err(StorageError::Invalid);
             }
-            input = tail;
         }
         if !input.is_empty() {
             return Err(StorageError::Invalid);
         }
-        Ok((client.to_owned(), bindings))
+        Ok((device, browser, bindings))
     }
 
-    /// Save only the public Client ID and numeric account associations.
+    /// Save public client IDs and account associations in one atomic replacement.
     ///
     /// # Errors
     /// Rejects invalid identifiers or paths and reports filesystem failures.
-    pub fn save_github(&self, client: &str, bindings: &GithubBindings) -> Result<(), StorageError> {
-        if !valid_client(client) {
+    pub fn save_github(
+        &self,
+        device: &str,
+        browser: &str,
+        bindings: &GithubBindings,
+    ) -> Result<(), StorageError> {
+        if !valid_client(device) || !valid_client(browser) {
             return Err(StorageError::Invalid);
         }
-        let mut bytes = header(b'G');
-        push_github_path(&mut bytes, client.as_bytes())?;
+        let mut bytes = header(b'H');
+        push_github_path(&mut bytes, device.as_bytes())?;
+        push_github_path(&mut bytes, browser.as_bytes())?;
         bytes.extend(
             u16::try_from(bindings.len())
                 .map_err(|_| StorageError::Invalid)?
                 .to_le_bytes(),
         );
         for (path, id) in bindings {
-            if !path.is_absolute() || *id == 0 {
+            if !path.is_absolute() || id.number == 0 {
                 return Err(StorageError::Invalid);
             }
             push_github_path(&mut bytes, &encode_path(path)?)?;
-            bytes.extend(id.to_le_bytes());
+            bytes.extend(id.number.to_le_bytes());
+            bytes.push(match id.method {
+                AuthMethod::Device => 0,
+                AuthMethod::Browser if !browser.is_empty() => 1,
+                AuthMethod::Browser => return Err(StorageError::Invalid),
+            });
         }
         if bytes.len() > MAX_BYTES {
             return Err(StorageError::Invalid);
@@ -517,6 +557,42 @@ mod tests {
             inaccessible
                 .save_preferences(Preferences::default())
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn legacy_github_workspace_bindings_keep_the_device_account() {
+        let root = tempfile::tempdir().expect("profile");
+        let store = Store::at(root.path(), root.path());
+        let path = root.path().join("repository");
+        let legacy = AccountId {
+            method: AuthMethod::Device,
+            number: 42,
+        };
+        let mut original = header(b'G');
+        push_github_path(&mut original, b"fixtureDeviceApp").expect("client");
+        original.extend(1_u16.to_le_bytes());
+        push_github_path(&mut original, &encode_path(&path).expect("encoded path")).expect("path");
+        original.extend(legacy.number.to_le_bytes());
+        let record = store.recent.with_file_name("github.bin");
+        fs::write(record, original).expect("legacy profile");
+
+        let (device, browser, mut bindings) = store.load_github().expect("legacy profile restored");
+        assert_eq!(device, "fixtureDeviceApp");
+        assert_eq!(browser, "");
+        assert_eq!(bindings.get(&path), Some(&legacy));
+        let other = root.path().join("other");
+        let oauth = AccountId {
+            method: AuthMethod::Browser,
+            number: legacy.number,
+        };
+        bindings.insert(other, oauth);
+        store
+            .save_github(&device, "fixtureBrowserApp", &bindings)
+            .expect("versioned record");
+        assert_eq!(
+            store.load_github().expect("versioned record"),
+            (device, "fixtureBrowserApp".into(), bindings)
         );
     }
 

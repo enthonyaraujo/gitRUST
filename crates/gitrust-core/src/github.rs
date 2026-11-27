@@ -77,8 +77,37 @@ pub struct Profile {
     pub name: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum AuthMethod {
+    Device,
+    Browser,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct AccountId {
+    pub method: AuthMethod,
+    pub number: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum BrowserState {
+    #[default]
+    Idle,
+    Starting,
+    AwaitingBrowserAuthorization,
+    CallbackReceived,
+    ExchangingCode,
+    FetchingProfile,
+    Authenticated,
+    Cancelled,
+    Expired,
+    Failed,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Account {
+    pub id: AccountId,
+    pub scopes: Arc<[String]>,
     pub profile: Profile,
     pub connection: Connection,
 }
@@ -141,6 +170,12 @@ pub struct DevicePrompt {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Notice {
     InvalidClient,
+    OAuthConfiguration,
+    OAuthHandler,
+    WrongAccount,
+    SignedIn,
+    InsufficientScope,
+    SsoRequired,
     InvalidInput,
     Offline,
     Timeout,
@@ -168,12 +203,14 @@ pub enum Notice {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct View {
     pub client_id: String,
+    pub browser_client_id: String,
+    pub browser_state: BrowserState,
     pub workspace: Option<PathBuf>,
     pub local_repositories: Arc<[RepositoryKey]>,
     pub review: Option<PullRequest>,
     pub accounts: Arc<[Account]>,
-    pub active: Option<u64>,
-    pub workspace_account: Option<u64>,
+    pub active: Option<AccountId>,
+    pub workspace_account: Option<AccountId>,
     pub workspace_repo: Option<RepositoryKey>,
     pub workspace_branch: Option<String>,
     pub workspace_revision: Option<String>,
@@ -230,15 +267,22 @@ pub struct CreatePull {
 
 #[derive(Clone, Debug)]
 pub enum Action {
-    Restore(String),
+    Restore {
+        device: String,
+        browser: String,
+    },
+    BrowserSignIn {
+        reconnect: Option<AccountId>,
+    },
+    ReopenBrowser,
     SignIn {
         client_id: String,
-        reconnect: Option<u64>,
+        reconnect: Option<AccountId>,
     },
     Cancel,
-    Select(u64),
-    Bind(PathBuf, Option<u64>),
-    Disconnect(u64),
+    Select(AccountId),
+    Bind(PathBuf, Option<AccountId>),
+    Disconnect(AccountId),
     Refresh,
     Repositories {
         installation: Option<u64>,

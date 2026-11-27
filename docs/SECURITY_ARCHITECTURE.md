@@ -139,3 +139,7 @@ Git global and system config stay isolated. Repository configuration passes the 
 ## Stage 07 GitHub integration
 
 The public Client ID identifies the registered GitHub App. Device Flow, strict TLS and encrypted Linux Secret Service protect session material. Tokens are scoped by account, refreshed on explicit use, and omitted from the workspace profile. Git receives a bearer-derived Basic header only for its reviewed HTTPS repository URL; GitHub REST uses a Bearer header only on the API origin. [Authentication](GITHUB_AUTHENTICATION.md)
+
+## Stage 07.1 OAuth browser authorization
+
+S256 PKCE, a cryptographically random state and a five-minute single-use callback bind the OAuth flow to the initiating instance. The Linux runtime lock, restricted socket and same-UID peer checks guard local delivery. The browser Client Secret is provisioned separately in Secret Service. An OAuth session is bound to its GitHub account and Client ID and is isolated from Device Flow. The OAuth scope `repo` covers broadly what the account can access subject to organization policy. The Git and REST credential boundaries remain scoped to HTTPS. [ADR-0013](adr/0013-native-browser-oauth.md)

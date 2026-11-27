@@ -3,8 +3,8 @@ use std::{fmt, path::PathBuf, sync::Arc};
 use egui::{Button, ColorImage, ComboBox, RichText, ScrollArea, TextEdit, TextureHandle, Ui, Vec2};
 use gitrust_core::{
     github::{
-        Account, Action, Avatar, Connection, CreatePull, CreateRepository, Notice, Publish,
-        PullFilter, Repository, RepositoryKey, View,
+        Account, AccountId, Action, AuthMethod, Avatar, BrowserState, Connection, CreatePull,
+        CreateRepository, Notice, Publish, PullFilter, Repository, RepositoryKey, View,
     },
     workspaces::RepositoryAction,
 };
@@ -33,7 +33,7 @@ enum Form {
     Pull,
     Sync(RepositoryKey, String),
     Checkout(RepositoryKey, u64),
-    Disconnect(u64),
+    Disconnect(AccountId),
 }
 
 #[derive(Default)]
@@ -42,7 +42,7 @@ pub(super) struct GithubUi {
     form: Option<Form>,
     client: String,
     configure_client: bool,
-    account: Option<u64>,
+    account: Option<AccountId>,
     repository: Option<RepositoryKey>,
     pull: Option<u64>,
     pull_repo: Option<RepositoryKey>,
@@ -164,8 +164,54 @@ impl GithubUi {
         l: Language,
         p: Palette,
     ) {
+        use BrowserState as B;
         if let Some(message) = view.notice {
             ui.label(notice(message, l));
+        }
+        if view.busy
+            && matches!(
+                view.browser_state,
+                B::Starting
+                    | B::AwaitingBrowserAuthorization
+                    | B::CallbackReceived
+                    | B::ExchangingCode
+                    | B::FetchingProfile
+            )
+        {
+            let dialog = c::modal(
+                ui,
+                "github-browser-authorization",
+                p,
+                l.local("GitHub authorization", "Autorização do GitHub"),
+                |ui| {
+                    ui.set_max_width(410.0_f32.min(ui.ctx().content_rect().width() - 48.0));
+                    ui.label(match view.browser_state {
+                    B::Starting => l.local("Preparing to open the browser…", "Preparando a abertura do navegador…"),
+                    B::AwaitingBrowserAuthorization => l.local(
+                        "Complete the gitRUST authorization in your browser. You will return to this window after approving access.",
+                        "Conclua a autorização do gitRUST no navegador. Você retornará a esta janela após aprovar o acesso.",
+                    ),
+                    _ => l.local("Completing GitHub sign-in…", "Concluindo a conexão com o GitHub…"),
+                });
+                    if let Some(message) = view.notice {
+                        ui.label(notice(message, l));
+                    }
+                    ui.horizontal_wrapped(|ui| {
+                        if view.browser_state == B::AwaitingBrowserAuthorization
+                            && c::primary(ui, l.local("Reopen browser", "Reabrir navegador"), p)
+                                .clicked()
+                        {
+                            self.send(Action::ReopenBrowser);
+                        }
+                        ui.button(l.text(Text::Cancel)).clicked()
+                    })
+                    .inner
+                },
+            );
+            if dialog.inner || dialog.should_close() {
+                self.send(Action::Cancel);
+            }
+            return;
         }
         if view.busy {
             ui.horizontal_wrapped(|ui| {
@@ -203,6 +249,29 @@ impl GithubUi {
     }
 
     pub(super) fn sign_in_controls(&mut self, ui: &mut Ui, view: &View, l: Language, p: Palette) {
+        let label = if view.accounts.is_empty() {
+            l.local("Sign in with GitHub", "Entrar com GitHub")
+        } else {
+            l.local("Add a GitHub account", "Adicionar conta do GitHub")
+        };
+        if c::primary(ui, label, p).clicked() {
+            self.send(Action::BrowserSignIn { reconnect: None });
+        }
+        if matches!(
+            view.notice,
+            Some(Notice::OAuthConfiguration | Notice::OAuthHandler)
+        ) && ui
+            .link(l.local("OAuth App setup", "Configurar o OAuth App"))
+            .clicked()
+        {
+            self.send(Action::Open(
+                "https://github.com/enthonyaraujo/gitRUST/blob/main/docs/GITHUB_OAUTH_SETUP.md"
+                    .into(),
+            ));
+        }
+    }
+
+    fn device_sign_in(&mut self, ui: &mut Ui, view: &View, l: Language, p: Palette) {
         let configured = !view.client_id.is_empty();
         let label = if view.accounts.is_empty() {
             l.local("Sign in to GitHub.com", "Entrar no GitHub.com")
@@ -255,13 +324,21 @@ impl GithubUi {
             .id_salt("github-accounts")
             .show(ui, |ui| {
                 self.sign_in_controls(ui, view, l, p);
+                egui::CollapsingHeader::new(l.local(
+                    "GitHub App (Device Flow)",
+                    "GitHub App (código de dispositivo)",
+                ))
+                .show(ui, |ui| self.device_sign_in(ui, view, l, p));
                 ui.horizontal_wrapped(|ui| {
-                    if !view.client_id.is_empty()
+                    if (!view.client_id.is_empty() || !view.browser_client_id.is_empty())
                         && ui
                             .button(l.local("Load saved accounts", "Carregar contas salvas"))
                             .clicked()
                     {
-                        self.send(Action::Restore(view.client_id.clone()));
+                        self.send(Action::Restore {
+                            device: String::new(),
+                            browser: String::new(),
+                        });
                     }
                     if ui
                         .button(l.local(
@@ -271,7 +348,12 @@ impl GithubUi {
                         .clicked()
                     {
                         self.send(Action::Open(
-                            "https://github.com/settings/installations".into(),
+                            if Self::is_browser(view) {
+                                "https://github.com/settings/applications"
+                            } else {
+                                "https://github.com/settings/installations"
+                            }
+                            .into(),
                         ));
                     }
                 });
@@ -318,7 +400,7 @@ impl GithubUi {
 
     fn account_line(&mut self, ui: &mut Ui, view: &View, account: &Account, l: Language) {
         let profile = &account.profile;
-        let active = view.active == Some(profile.id);
+        let active = view.active == Some(account.id);
         ui.horizontal_wrapped(|ui| {
             if let Some(avatar) = view.avatar.as_ref().filter(|_| active) {
                 if self
@@ -347,7 +429,7 @@ impl GithubUi {
                 .selectable_label(active, format!("@{}", profile.login))
                 .clicked()
             {
-                self.send(Action::Select(profile.id));
+                self.send(Action::Select(account.id));
             }
             if let Some(name) = &profile.name {
                 ui.label(name);
@@ -359,22 +441,36 @@ impl GithubUi {
                 }
                 Connection::Reconnect => l.local("Reconnect required", "Reconexão necessária"),
             });
+            ui.label(match account.id.method {
+                AuthMethod::Device => "GitHub App",
+                AuthMethod::Browser => "OAuth App",
+            });
             if ui.button(l.local("Reconnect", "Reconectar")).clicked() {
-                self.send(Action::SignIn {
-                    client_id: view.client_id.clone(),
-                    reconnect: Some(profile.id),
+                self.send(match account.id.method {
+                    AuthMethod::Device => Action::SignIn {
+                        client_id: view.client_id.clone(),
+                        reconnect: Some(account.id),
+                    },
+                    AuthMethod::Browser => Action::BrowserSignIn {
+                        reconnect: Some(account.id),
+                    },
                 });
             }
             if ui.button(l.local("Disconnect", "Desconectar")).clicked() {
-                self.form = Some(Form::Disconnect(profile.id));
+                self.form = Some(Form::Disconnect(account.id));
             }
         });
+    }
+
+    fn is_browser(view: &View) -> bool {
+        view.active
+            .is_some_and(|id| id.method == AuthMethod::Browser)
     }
 
     fn active_login(view: &View) -> &str {
         view.accounts
             .iter()
-            .find(|account| Some(account.profile.id) == view.active)
+            .find(|account| Some(account.id) == view.active)
             .map_or("", |account| &account.profile.login)
     }
 
@@ -418,33 +514,35 @@ impl GithubUi {
             }
         });
         ui.horizontal_wrapped(|ui| {
-            let mut selected = self.installation;
-            let summary = view
-                .organizations
-                .iter()
-                .find(|org| Some(org.installation) == selected)
-                .map_or(l.local("All available", "Todos disponíveis"), |org| {
-                    &org.login
-                });
-            ComboBox::from_label(l.local("Organization", "Organização"))
-                .selected_text(summary)
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(
-                        &mut selected,
-                        None,
-                        l.local("All available", "Todos disponíveis"),
-                    );
-                    for org in view.organizations.iter() {
-                        ui.selectable_value(&mut selected, Some(org.installation), &org.login);
-                    }
-                });
-            if selected != self.installation {
-                self.installation = selected;
-                self.page = 1;
-                self.send(Action::Repositories {
-                    installation: selected,
-                    page: 1,
-                });
+            if !Self::is_browser(view) {
+                let mut selected = self.installation;
+                let summary = view
+                    .organizations
+                    .iter()
+                    .find(|org| Some(org.installation) == selected)
+                    .map_or(l.local("All available", "Todos disponíveis"), |org| {
+                        &org.login
+                    });
+                ComboBox::from_label(l.local("Organization", "Organização"))
+                    .selected_text(summary)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut selected,
+                            None,
+                            l.local("All available", "Todos disponíveis"),
+                        );
+                        for org in view.organizations.iter() {
+                            ui.selectable_value(&mut selected, Some(org.installation), &org.login);
+                        }
+                    });
+                if selected != self.installation {
+                    self.installation = selected;
+                    self.page = 1;
+                    self.send(Action::Repositories {
+                        installation: selected,
+                        page: 1,
+                    });
+                }
             }
             ComboBox::from_label(l.local("Visibility", "Visibilidade"))
                 .selected_text(visibility(self.visible, l))
@@ -1165,11 +1263,7 @@ impl GithubUi {
                 );
             }
             Form::Disconnect(account) => {
-                if let Some(account) = view
-                    .accounts
-                    .iter()
-                    .find(|item| item.profile.id == *account)
-                {
+                if let Some(account) = view.accounts.iter().find(|item| item.id == *account) {
                     ui.strong(&account.profile.login);
                 }
                 ui.label(l.local(
@@ -1184,6 +1278,14 @@ impl GithubUi {
     }
 
     fn owner(&mut self, ui: &mut Ui, view: &View, l: Language) {
+        if Self::is_browser(view) {
+            field(
+                ui,
+                l.local("Account or organization", "Conta ou organização"),
+                &mut self.owner,
+            );
+            return;
+        }
         let login = Self::active_login(view);
         ComboBox::from_label(l.local("Owner", "Proprietário"))
             .selected_text(&self.owner)
@@ -1304,6 +1406,7 @@ fn pull_filter(value: PullFilter, l: Language) -> &'static str {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn notice(notice: Notice, l: Language) -> String {
     use Notice as N;
     if let N::RateLimited(seconds) = notice {
@@ -1316,6 +1419,27 @@ fn notice(notice: Notice, l: Language) -> String {
         N::InvalidClient => l.local(
             "Check the gitRUST GitHub App Client ID and Device Flow setting.",
             "Confira o Client ID do GitHub App e a opção Device Flow.",
+        ),
+        N::OAuthConfiguration => l.local(
+            "Browser sign-in is unavailable until the maintainer configures the gitRUST OAuth App.",
+            "O login pelo navegador requer que o mantenedor configure o OAuth App do gitRUST.",
+        ),
+        N::OAuthHandler => l.local(
+            "Could not open browser authorization or register the gitRUST callback. Check the desktop session and try again.",
+            "Não foi possível abrir a autorização ou registrar o retorno ao gitRUST. Confira a sessão gráfica e tente novamente.",
+        ),
+        N::SignedIn => l.local("GitHub account connected.", "Conta do GitHub vinculada."),
+        N::InsufficientScope => l.local(
+            "GitHub did not grant profile and repository access. Authorize those permissions and try again.",
+            "O GitHub não concedeu acesso ao perfil e aos repositórios. Autorize essas permissões e tente novamente.",
+        ),
+        N::WrongAccount => l.local(
+            "GitHub authorized a different account. Select the account you are reconnecting.",
+            "O GitHub autorizou outra conta. Selecione a conta que você quer reconectar.",
+        ),
+        N::SsoRequired => l.local(
+            "This organization requires SSO. Complete SSO on GitHub, then reconnect and retry.",
+            "Esta organização exige SSO. Conclua o SSO no GitHub, reconecte a conta e tente novamente.",
         ),
         N::InvalidInput => l.local(
             "Check the supplied repository, branch or account.",
@@ -1340,8 +1464,8 @@ fn notice(notice: Notice, l: Language) -> String {
         ),
         N::Reconnect => l.local("Reconnect this account.", "Reconecte esta conta."),
         N::Forbidden => l.local(
-            "The account or installation lacks permission.",
-            "A conta ou instalação não tem permissão.",
+            "GitHub denied access. Check your account permissions and the organization’s app policy.",
+            "O GitHub negou o acesso. Confira as permissões da conta e a política de aplicativos da organização.",
         ),
         N::Unavailable | N::RateLimited(_) => {
             l.local("GitHub is unavailable.", "GitHub indisponível.")
@@ -1363,8 +1487,8 @@ fn notice(notice: Notice, l: Language) -> String {
             "Não foi possível acessar o armazenamento de credenciais.",
         ),
         N::NoAccess => l.local(
-            "The resource is unavailable to this installation. Check GitHub access.",
-            "O recurso está indisponível para esta instalação. Confira o acesso no GitHub.",
+            "GitHub could not expose this resource. Check repository access and app authorization.",
+            "O GitHub não disponibilizou este recurso. Confira o acesso ao repositório e a autorização do aplicativo.",
         ),
         N::Created => l.local(
             "The remote request completed.",

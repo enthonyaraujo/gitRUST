@@ -418,3 +418,182 @@ fn production_transport_requires_tls_before_transmitting_credentials() {
         matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
     );
 }
+
+fn browser_fixture(denied: bool) -> (ClientId, BrowserAttempt, Callback, String) {
+    let client = ClientId::new("fixtureBrowserClient").expect("OAuth App ID");
+    let attempt = BrowserAttempt::new().expect("PKCE");
+    let url = attempt.authorize_url(&client);
+    let state = url
+        .split('&')
+        .find_map(|part| part.strip_prefix("state="))
+        .expect("state");
+    let challenge = url
+        .split('&')
+        .find_map(|part| part.strip_prefix("code_challenge="))
+        .expect("challenge");
+    let response = if denied {
+        "error=access_denied"
+    } else {
+        "code=fixture-code"
+    };
+    let callback = Callback::parse(&format!("{REDIRECT_URI}?state={state}&{response}"))
+        .expect("fixture callback");
+    (client, attempt, callback, challenge.to_owned())
+}
+
+#[test]
+fn browser_oauth_exchanges_once_and_restores_a_client_bound_session() {
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    use gitrust_core::github::BrowserState;
+    use sha2::{Digest as _, Sha256};
+    let (client, requests, worker) = server(vec![
+        reply(
+            "POST",
+            "/login/oauth/access_token",
+            200,
+            json!({
+                "access_token": "browser-access", "refresh_token": "browser-refresh",
+                "expires_in": 2, "scope": "repo,read:user",
+            }),
+        ),
+        reply("GET", "/user", 200, profile(100, "owner")),
+        reply(
+            "GET",
+            "/user/repos?per_page=30&page=1&sort=updated",
+            200,
+            json!([repo()]),
+        ),
+        reply(
+            "POST",
+            "/login/oauth/access_token",
+            200,
+            json!({
+                "access_token": "rotated-access", "refresh_token": "rotated-refresh",
+                "expires_in": 3600, "scope": "repo,read:user",
+            }),
+        ),
+    ]);
+    let (id, attempt, callback, challenge) = browser_fixture(false);
+    let stop = Cancellation::default();
+    let (progress, steps) = mpsc::channel();
+    let session = client
+        .exchange_browser(&id, "fixture-secret", attempt, callback, &stop, |step| {
+            progress.send(step).expect("progress received");
+        })
+        .expect("exchange");
+    assert_eq!(
+        steps.try_iter().collect::<Vec<_>>(),
+        [BrowserState::ExchangingCode, BrowserState::FetchingProfile]
+    );
+    assert_eq!(session.profile().id, 100);
+    assert_eq!(session.scopes(), ["repo", "read:user"]);
+    let record = session.for_vault().expect("serialize");
+    assert!(Session::from_vault(100, &record).is_err());
+    let another = ClientId::new("fixtureAnotherClient").expect("another app");
+    assert!(Session::from_browser_vault(100, &another, &record).is_err());
+    assert!(Session::from_browser_vault(200, &id, &record).is_err());
+    let session = Session::from_browser_vault(100, &id, &record).expect("same app and account");
+    assert!(session.needs_refresh());
+    let page = client
+        .repositories(session.access(), None, 1, &stop)
+        .expect("account repositories");
+    assert!(page.items[0].private);
+    let refreshed = client
+        .refresh_browser(&id, "fixture-secret", &session, &stop)
+        .expect("rotate");
+    assert_eq!(refreshed.access(), "rotated-access");
+    assert_eq!(refreshed.profile(), session.profile());
+    assert!(!refreshed.needs_refresh());
+    assert!(!format!("{refreshed:?}").contains("rotated-access"));
+    worker.join().expect("fixture requests");
+    let requests = requests.try_iter().collect::<Vec<_>>();
+    let body = requests[0].split_once("\r\n\r\n").map_or_else(
+        || requests[0].rsplit_once("\r\n").expect("last header").1,
+        |(_, body)| body,
+    );
+    let body: Value = serde_json::from_str(body).expect("code exchange JSON");
+    let verifier = body["code_verifier"].as_str().expect("private verifier");
+    assert_eq!(
+        URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes())),
+        challenge
+    );
+    assert_eq!(body["redirect_uri"], REDIRECT_URI);
+    assert_eq!(body["client_secret"], "fixture-secret");
+    assert!(requests[1].contains("Bearer browser-access"));
+    assert!(requests[3].contains("browser-refresh"));
+    assert!(requests[3].contains("fixture-secret"));
+}
+
+#[test]
+fn browser_rejects_denial_secret_failure_downgraded_scope_and_cancel() {
+    let (client, requests, worker) = server(vec![
+        reply(
+            "POST",
+            "/login/oauth/access_token",
+            200,
+            json!({"error":"incorrect_client_credentials"}),
+        ),
+        reply(
+            "POST",
+            "/login/oauth/access_token",
+            200,
+            json!({
+                "access_token":"limited-access", "scope":"read:user",
+            }),
+        ),
+    ]);
+    for (denied, stopped, expected) in [
+        (true, false, Notice::Denied),
+        (false, true, Notice::Cancelled),
+        (false, false, Notice::OAuthConfiguration),
+        (false, false, Notice::InsufficientScope),
+    ] {
+        let (id, attempt, callback, _) = browser_fixture(denied);
+        let stop = Cancellation::default();
+        if stopped {
+            stop.cancel();
+        }
+        assert_eq!(
+            client
+                .exchange_browser(&id, "fixture-secret", attempt, callback, &stop, |_| {})
+                .expect_err("invalid authorization"),
+            expected
+        );
+    }
+    worker.join().expect("fixture requests");
+    assert_eq!(requests.try_iter().count(), 2);
+}
+
+#[test]
+fn interrupted_exchange_and_required_sso_are_reported() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("loopback");
+    let origin =
+        Box::leak(format!("http://{}", listener.local_addr().expect("address")).into_boxed_str());
+    drop(listener);
+    let client = Client::new(false, origin, origin);
+    let (id, attempt, callback, _) = browser_fixture(false);
+    assert_eq!(
+        client
+            .exchange_browser(
+                &id,
+                "fixture-secret",
+                attempt,
+                callback,
+                &Cancellation::default(),
+                |_| {}
+            )
+            .expect_err("offline"),
+        Notice::Offline
+    );
+
+    let mut sso = reply("GET", "/repos/owner/private-project", 403, json!({}));
+    sso.headers = "X-GitHub-SSO: required; url=https://github.com/orgs/owner/sso\r\n";
+    let (client, _, worker) = server(vec![sso]);
+    assert_eq!(
+        client
+            .repository("fixture-access", &repository(), &Cancellation::default())
+            .expect_err("required SSO"),
+        Notice::SsoRequired
+    );
+    worker.join().expect("fixture requests");
+}

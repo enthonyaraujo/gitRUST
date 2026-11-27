@@ -2,8 +2,10 @@
 #![allow(missing_docs, clippy::missing_errors_doc)]
 
 mod auth;
+mod browser;
 mod wire;
 pub use auth::{Cancellation, ClientId, Session, unix_time};
+pub use browser::{BrowserAttempt, Callback, MAX_CALLBACK_BYTES, REDIRECT_URI};
 
 use gitrust_core::github::{
     Check, CreatePull, CreateRepository, Notice, Organization, Profile, PullFilter, PullRequest,
@@ -155,18 +157,7 @@ impl Client {
             let reset = number("x-ratelimit-reset").map(|at| at.saturating_sub(unix_time()));
             return Err(Notice::RateLimited(retry.or(reset).unwrap_or(60)));
         }
-        match status {
-            200..=299 => {}
-            300..=399 => return Err(Notice::Redirect),
-            401 => return Err(Notice::Reconnect),
-            403 => return Err(Notice::Forbidden),
-            404 => return Err(Notice::NoAccess),
-            400 | 409 | 422 => return Err(Notice::InvalidInput),
-            500..=599 if mutation => {
-                return Err(Notice::UnknownMutation);
-            }
-            _ => return Err(Notice::Unavailable),
-        }
+        check_status(status, response.headers(), mutation)?;
         let more = response
             .headers()
             .get("link")
@@ -508,6 +499,31 @@ pub fn browser_url_allowed(value: &str) -> bool {
         && !path
             .bytes()
             .any(|byte| byte <= b' ' || byte == 127 || b"\\?#".contains(&byte))
+}
+
+fn check_status(
+    status: u16,
+    headers: &ureq::http::HeaderMap,
+    mutation: bool,
+) -> Result<(), Notice> {
+    if status == 403
+        && headers
+            .get("x-github-sso")
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.starts_with("required"))
+    {
+        return Err(Notice::SsoRequired);
+    }
+    match status {
+        200..=299 => Ok(()),
+        300..=399 => Err(Notice::Redirect),
+        401 => Err(Notice::Reconnect),
+        403 => Err(Notice::Forbidden),
+        404 => Err(Notice::NoAccess),
+        400 | 409 | 422 => Err(Notice::InvalidInput),
+        500..=599 if mutation => Err(Notice::UnknownMutation),
+        _ => Err(Notice::Unavailable),
+    }
 }
 
 fn validate_sha(revision: &str) -> Result<(), Notice> {

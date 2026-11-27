@@ -7,6 +7,7 @@ mod remotes;
 
 #[path = "workspace_github.rs"]
 mod github;
+pub(crate) use github::launch_browser;
 
 use std::{
     collections::HashMap,
@@ -43,13 +44,22 @@ pub(crate) struct Workspaces {
 }
 
 impl Workspaces {
-    pub(crate) fn start(ctx: &egui::Context) -> Self {
-        Self::start_with(ctx, || Store::discover().ok())
+    pub(crate) fn start(ctx: &egui::Context, oauth: Option<crate::browser_oauth::Inbox>) -> Self {
+        Self::start_with_oauth(ctx, || Store::discover().ok(), oauth)
     }
 
+    #[cfg(test)]
     fn start_with(
         ctx: &egui::Context,
         profile: impl FnOnce() -> Option<Store> + Send + 'static,
+    ) -> Self {
+        Self::start_with_oauth(ctx, profile, None)
+    }
+
+    fn start_with_oauth(
+        ctx: &egui::Context,
+        profile: impl FnOnce() -> Option<Store> + Send + 'static,
+        oauth: Option<crate::browser_oauth::Inbox>,
     ) -> Self {
         let (commands, incoming) = bounded(32);
         let updates = Arc::new(Mutex::new(ViewUpdate::default()));
@@ -58,7 +68,7 @@ impl Workspaces {
         let wake = ctx.clone();
         if let Ok(thread) = thread::Builder::new()
             .name("gitrust-workspaces".into())
-            .spawn(move || Coordinator::run(&incoming, profile(), mailbox, wake))
+            .spawn(move || Coordinator::run(&incoming, profile(), mailbox, wake, oauth))
         {
             worker = Some(thread);
         } else if let Ok(mut update) = updates.lock() {
@@ -100,6 +110,7 @@ impl Drop for Workspaces {
 
 pub(crate) enum WorkerEvent {
     GithubCode(gitrust_core::github::DevicePrompt),
+    GithubBrowser(gitrust_core::github::BrowserState, Option<String>),
     Github(Box<crate::github_actor::Message>),
     Complete(GitTaskId),
     Folder(Option<PathBuf>, bool),
@@ -173,6 +184,7 @@ impl Coordinator {
         store: Option<Store>,
         mailbox: Arc<Mutex<ViewUpdate>>,
         wake: egui::Context,
+        oauth: Option<crate::browser_oauth::Inbox>,
     ) {
         let (events, replies) = unbounded();
         let (watch_events, changes) = bounded(64);
@@ -211,7 +223,7 @@ impl Coordinator {
         };
         let preferences = service.load_profile();
         service.discover_git();
-        service.initialize_github();
+        service.initialize_github(oauth);
         service.initialize_welcome();
         service.publish(Some(preferences), None);
         loop {
@@ -536,6 +548,7 @@ impl Coordinator {
     fn on_reply(&mut self, event: WorkerEvent) -> Option<PathBuf> {
         match event {
             WorkerEvent::GithubCode(code) => self.github_code(code),
+            WorkerEvent::GithubBrowser(state, url) => self.github_browser(state, url),
             WorkerEvent::Github(result) => self.complete_github(*result),
             WorkerEvent::Complete(id) => self.complete(id),
             WorkerEvent::Folder(path, for_destination) => {
