@@ -1109,3 +1109,21 @@ fn workspace_hides_success_notices_and_keeps_failures_below_tabs() {
         }
     }
 }
+
+#[test]
+fn escape_returns_to_workspace_from_github() {
+    let ctx = Context::default();
+    let mut shell = Desktop::new(&ctx, UiOptions::default());
+    shell.enable_repository_management();
+    shell.screen = Screen::Github;
+    let _ = render(&ctx, &mut shell, input(0.0));
+    let _ = render(
+        &ctx,
+        &mut shell,
+        RawInput {
+            events: vec![key(Key::Escape, Modifiers::NONE)],
+            ..input(0.1)
+        },
+    );
+    assert_eq!(shell.screen, Screen::Workspace);
+}

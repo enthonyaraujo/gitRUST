@@ -342,7 +342,9 @@ impl Desktop {
             if let Some(tab) = tab_shortcut(ui) {
                 self.show_tab(tab);
             }
-            if compact && shortcut(ui, Modifiers::NONE, Key::Escape) {
+            if self.screen == Screen::Github && shortcut(ui, Modifiers::NONE, Key::Escape) {
+                self.screen = Screen::Workspace;
+            } else if compact && shortcut(ui, Modifiers::NONE, Key::Escape) {
                 self.compact_detail = false;
             }
         }
@@ -441,6 +443,14 @@ impl Desktop {
                     }
                 }
                 Screen::Github => {
+                    if ui
+                        .button(l.local("Back to workspace", "Voltar ao workspace"))
+                        .clicked()
+                    {
+                        self.screen = Screen::Workspace;
+                        ui.ctx().request_repaint();
+                        return;
+                    }
                     if let Some(managed) = &mut self.managed
                         && let Some(action) = managed.github.show(ui, &managed.view.github, l, p)
                     {

@@ -254,7 +254,10 @@ impl GithubUi {
         } else {
             l.local("Add a GitHub account", "Adicionar conta do GitHub")
         };
-        if c::primary(ui, label, p).clicked() {
+        if c::primary(ui, label, p)
+            .on_hover_text(l.local("Opens GitHub in your browser", "Abre o GitHub no navegador"))
+            .clicked()
+        {
             self.send(Action::BrowserSignIn { reconnect: None });
         }
         if matches!(
@@ -323,79 +326,84 @@ impl GithubUi {
         ScrollArea::vertical()
             .id_salt("github-accounts")
             .show(ui, |ui| {
-                self.sign_in_controls(ui, view, l, p);
-                egui::CollapsingHeader::new(l.local(
-                    "GitHub App (Device Flow)",
-                    "GitHub App (código de dispositivo)",
-                ))
-                .show(ui, |ui| self.device_sign_in(ui, view, l, p));
-                ui.horizontal_wrapped(|ui| {
-                    if (!view.client_id.is_empty() || !view.browser_client_id.is_empty())
-                        && ui
-                            .button(l.local("Load saved accounts", "Carregar contas salvas"))
-                            .clicked()
-                    {
-                        self.send(Action::Restore {
-                            device: String::new(),
-                            browser: String::new(),
-                        });
-                    }
-                    if ui
-                        .button(l.local(
-                            "Manage authorization on GitHub",
-                            "Gerenciar autorizações no GitHub",
-                        ))
-                        .clicked()
-                    {
-                        self.send(Action::Open(
-                            if Self::is_browser(view) {
-                                "https://github.com/settings/applications"
-                            } else {
-                                "https://github.com/settings/installations"
-                            }
-                            .into(),
-                        ));
-                    }
-                });
                 for account in view.accounts.iter() {
                     self.account_line(ui, view, account, l);
                 }
-                if let Some(id) = view.active {
-                    ui.horizontal_wrapped(|ui| {
-                        if ui
-                            .button(
-                                l.local("Refresh account and access", "Atualizar conta e acesso"),
-                            )
-                            .clicked()
-                        {
-                            self.send(Action::Refresh);
-                        }
-                        if let Some(path) = &view.workspace {
-                            let bound = view.workspace_account == Some(id);
-                            let label = if bound {
-                                l.local("Unlink current workspace", "Desvincular workspace atual")
-                            } else {
-                                l.local(
-                                    "Link current workspace to this account",
-                                    "Vincular workspace atual a esta conta",
-                                )
-                            };
-                            if ui.button(label).clicked() {
-                                self.send(Action::Bind(path.clone(), (!bound).then_some(id)));
-                            }
-                        }
-                    });
+                self.sign_in_controls(ui, view, l, p);
+                egui::CollapsingHeader::new(
+                    l.local("Advanced settings", "Configurações avançadas"),
+                )
+                .show(ui, |ui| self.advanced_accounts(ui, view, l, p));
+            });
+    }
+
+    fn advanced_accounts(&mut self, ui: &mut Ui, view: &View, l: Language, p: Palette) {
+        egui::CollapsingHeader::new(l.local(
+            "GitHub App (Device Flow)",
+            "GitHub App (código de dispositivo)",
+        ))
+        .show(ui, |ui| self.device_sign_in(ui, view, l, p));
+        ui.horizontal_wrapped(|ui| {
+            if (!view.client_id.is_empty() || !view.browser_client_id.is_empty())
+                && ui
+                    .button(l.local("Load saved accounts", "Carregar contas salvas"))
+                    .clicked()
+            {
+                self.send(Action::Restore {
+                    device: String::new(),
+                    browser: String::new(),
+                });
+            }
+            if ui
+                .button(l.local(
+                    "Manage authorization on GitHub",
+                    "Gerenciar autorizações no GitHub",
+                ))
+                .clicked()
+            {
+                self.send(Action::Open(
+                    if Self::is_browser(view) {
+                        "https://github.com/settings/applications"
+                    } else {
+                        "https://github.com/settings/installations"
+                    }
+                    .into(),
+                ));
+            }
+        });
+        if let Some(id) = view.active {
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .button(l.local("Refresh account and access", "Atualizar conta e acesso"))
+                    .clicked()
+                {
+                    self.send(Action::Refresh);
                 }
-                if !view.organizations.is_empty() {
-                    ui.separator();
-                    ui.strong(l.local("Authorized installations", "Instalações autorizadas"));
-                    for org in view.organizations.iter() {
-                        if ui.link(&org.login).clicked() {
-                            self.send(Action::Open(format!("https://github.com/{}", org.login)));
-                        }
+                if let Some(path) = &view.workspace {
+                    let bound = view.workspace_account == Some(id);
+                    let label = if bound {
+                        l.local("Unlink current workspace", "Desvincular workspace atual")
+                    } else {
+                        l.local(
+                            "Link current workspace to this account",
+                            "Vincular workspace atual a esta conta",
+                        )
+                    };
+                    if ui.button(label).clicked() {
+                        self.send(Action::Bind(path.clone(), (!bound).then_some(id)));
                     }
                 }
             });
+        }
+        if !view.organizations.is_empty() {
+            ui.separator();
+            ui.strong(l.local("Authorized installations", "Instalações autorizadas"));
+            for org in view.organizations.iter() {
+                if ui.link(&org.login).clicked() {
+                    self.send(Action::Open(format!("https://github.com/{}", org.login)));
+                }
+            }
+        }
     }
 
     fn account_line(&mut self, ui: &mut Ui, view: &View, account: &Account, l: Language) {
@@ -436,29 +444,31 @@ impl GithubUi {
             }
             ui.label(match account.connection {
                 Connection::Temporary => l.local("Temporary session", "Sessão temporária"),
-                Connection::Stored => {
-                    l.local("Saved in credential vault", "Salva no cofre de credenciais")
-                }
+                Connection::Stored => l.local("Connected", "Conectada"),
                 Connection::Reconnect => l.local("Reconnect required", "Reconexão necessária"),
             });
-            ui.label(match account.id.method {
-                AuthMethod::Device => "GitHub App",
-                AuthMethod::Browser => "OAuth App",
-            });
-            if ui.button(l.local("Reconnect", "Reconectar")).clicked() {
-                self.send(match account.id.method {
-                    AuthMethod::Device => Action::SignIn {
-                        client_id: view.client_id.clone(),
-                        reconnect: Some(account.id),
-                    },
-                    AuthMethod::Browser => Action::BrowserSignIn {
-                        reconnect: Some(account.id),
-                    },
+            ui.menu_button(l.local("Account options", "Opções da conta"), |ui| {
+                ui.label(match account.id.method {
+                    AuthMethod::Device => "GitHub App",
+                    AuthMethod::Browser => "OAuth App",
                 });
-            }
-            if ui.button(l.local("Disconnect", "Desconectar")).clicked() {
-                self.form = Some(Form::Disconnect(account.id));
-            }
+                if ui.button(l.local("Reconnect", "Reconectar")).clicked() {
+                    self.send(match account.id.method {
+                        AuthMethod::Device => Action::SignIn {
+                            client_id: view.client_id.clone(),
+                            reconnect: Some(account.id),
+                        },
+                        AuthMethod::Browser => Action::BrowserSignIn {
+                            reconnect: Some(account.id),
+                        },
+                    });
+                    ui.close();
+                }
+                if ui.button(l.local("Disconnect", "Desconectar")).clicked() {
+                    self.form = Some(Form::Disconnect(account.id));
+                    ui.close();
+                }
+            });
         });
     }
 
