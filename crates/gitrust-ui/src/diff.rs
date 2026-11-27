@@ -12,7 +12,7 @@ use egui::{
 
 use crate::components::{self, Icon};
 use crate::i18n::{Language, Text};
-use crate::theme::{Palette, code};
+use crate::theme::{Palette, code, size};
 
 const LINE_HEIGHT: f32 = 21.0;
 const GUTTER: f32 = 54.0;
@@ -331,6 +331,28 @@ impl DiffView {
         self.show_with_selection(ui, id, source, mode, l, p, None);
     }
 
+    pub(crate) fn show_commit(
+        &mut self,
+        ui: &mut Ui,
+        id: Id,
+        patch: &ChangePreview,
+        mode: &mut DiffMode,
+        l: Language,
+        p: Palette,
+    ) {
+        let filename = patch.key.path.to_string_lossy();
+        self.show_diff(
+            ui,
+            id,
+            Diff::Real(patch),
+            mode,
+            l,
+            p,
+            None,
+            Some(filename.as_ref()),
+        );
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn show_with_selection(
         &mut self,
@@ -342,6 +364,27 @@ impl DiffView {
         p: Palette,
         selection: Option<&mut BTreeSet<PatchSelection>>,
     ) {
+        self.show_diff(ui, id, source, mode, l, p, selection, None);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn show_diff(
+        &mut self,
+        ui: &mut Ui,
+        id: Id,
+        source: Diff<'_>,
+        mode: &mut DiffMode,
+        l: Language,
+        p: Palette,
+        selection: Option<&mut BTreeSet<PatchSelection>>,
+        commit_path: Option<&str>,
+    ) {
+        if self.active != Some((id, *mode)) {
+            self.copied = false;
+        }
+        let mut copy = commit_path.is_some_and(|path| {
+            commit_diff_header(ui, path, mode, l, p, self.copied, source.count(*mode) > 0)
+        });
         if source.count(*mode) == 0 {
             self.active = None;
             self.copied = false;
@@ -353,10 +396,9 @@ impl DiffView {
             ui.label(RichText::new(l.text(key)).color(p.muted));
             return;
         }
-        if self.active != Some((id, *mode)) {
-            self.copied = false;
+        if commit_path.is_none() {
+            copy = diff_toolbar(ui, mode, l, p, self.copied);
         }
-        let copy = diff_toolbar(ui, mode, l, p, self.copied);
         self.active = Some((id, *mode));
         if *mode == DiffMode::Split {
             split_header(ui, l, p, (ui.available_width() / 2.0).floor());
@@ -579,6 +621,67 @@ fn render_row(
         };
         render_cell(ui, a, numbers, width, mode == DiffMode::Unified, 0.0, l, p);
     }
+}
+
+fn commit_diff_header(
+    ui: &mut Ui,
+    path: &str,
+    mode: &mut DiffMode,
+    l: Language,
+    p: Palette,
+    copied: bool,
+    has_rows: bool,
+) -> bool {
+    components::panel(p.elevated, 0)
+        .inner_margin(egui::Margin::symmetric(8, 0))
+        .show(ui, |ui| {
+            let ((), copy) = egui::Sides::new()
+                .shrink_left()
+                .truncate()
+                .height(size::HISTORY_BAR)
+                .show(
+                    ui,
+                    |ui| {
+                        ui.add(Label::new(path).truncate()).on_hover_text(path);
+                    },
+                    |ui| {
+                        ui.add_enabled_ui(has_rows, |ui| {
+                            let copy = components::icon_button(
+                                ui,
+                                Icon::Copy,
+                                l.text(Text::CopyFullDiff),
+                                p,
+                            )
+                            .clicked();
+                            let options = components::icon_button(
+                                ui,
+                                Icon::Settings,
+                                l.local("Diff options", "Opções do diff"),
+                                p,
+                            );
+                            egui::Popup::menu(&options).show(|ui| {
+                                for (value, key) in [
+                                    (DiffMode::Unified, Text::Unified),
+                                    (DiffMode::Split, Text::Split),
+                                ] {
+                                    if ui.selectable_value(mode, value, l.text(key)).clicked() {
+                                        ui.close();
+                                    }
+                                }
+                            });
+                            if copied {
+                                ui.label(
+                                    RichText::new(l.text(Text::Copied)).small().color(p.success),
+                                );
+                            }
+                            copy
+                        })
+                        .inner
+                    },
+                );
+            copy
+        })
+        .inner
 }
 
 fn diff_toolbar(ui: &mut Ui, mode: &mut DiffMode, l: Language, p: Palette, copied: bool) -> bool {

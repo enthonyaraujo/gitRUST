@@ -155,6 +155,7 @@ pub(crate) mod size {
     pub(crate) const RADIUS: u8 = 5;
     pub(crate) const STROKE: f32 = 1.0;
     pub(crate) const CONTROL: f32 = 28.0;
+    pub(crate) const HISTORY_BAR: f32 = 34.0;
     pub(crate) const ROW: f32 = 34.0;
     pub(crate) const ICON: f32 = 16.0;
     pub(crate) const SIDEBAR: f32 = 252.0;
