@@ -1049,3 +1049,63 @@ fn right_click_on_branch_opens_actions_without_switching() {
     assert!(commands.contains(&egui::OutputCommand::CopyText("topic".into())));
     assert!(shell.take_repository_action().is_none());
 }
+
+#[test]
+fn workspace_hides_success_notices_and_keeps_failures_below_tabs() {
+    use gitrust_core::{
+        changes::ChangesView,
+        navigation::{NavigationNotice, NavigationView},
+        remotes::{RemoteNotice, RemotesView},
+        workspaces::{Activity, ChangeCounts, Checkout, RepositoryView, Workspace},
+    };
+
+    let ctx = Context::default();
+    let mut shell = Desktop::new(&ctx, UiOptions::default());
+    shell.enable_repository_management();
+    let mut view = RepositoryView {
+        git_available: true,
+        activity: Activity::Idle,
+        active: Some(Workspace {
+            path: "/fixture".into(),
+            checkout: Checkout::Branch("main".into()),
+            has_remote: true,
+            changes: Some(ChangeCounts::default()),
+        }),
+        changes: Some(ChangesView::default()),
+        navigation: Some(NavigationView {
+            notice: Some(NavigationNotice::BranchUpdated),
+            ..Default::default()
+        }),
+        remotes: Some(RemotesView {
+            notice: Some(RemoteNotice::Pushed),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    for (time, failure) in [(0.0, false), (0.1, true)] {
+        if failure {
+            view.remotes.as_mut().expect("remotes").notice = Some(RemoteNotice::Offline);
+        }
+        shell.set_repository_view(view.clone());
+        ctx.disable_accesskit();
+        ctx.enable_accesskit();
+        let tree = render(&ctx, &mut shell, input(time))
+            .platform_output
+            .accesskit_update
+            .expect("accessibility tree");
+        let bounds = |label| {
+            tree.nodes.iter().find_map(|(_, node)| {
+                (node.label() == Some(label) || node.value() == Some(label))
+                    .then(|| node.bounds())
+                    .flatten()
+            })
+        };
+        assert!(bounds("Push completed.").is_none());
+        assert!(bounds("Branch updated.").is_none());
+        let changes = bounds("Changes").expect("Changes tab");
+        if failure {
+            let remote_error = remotes::notice_text(RemoteNotice::Offline, Language::English);
+            assert!(bounds(remote_error).expect("remote error").y0 > changes.y1);
+        }
+    }
+}

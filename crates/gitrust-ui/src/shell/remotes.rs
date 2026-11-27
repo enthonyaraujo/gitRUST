@@ -463,10 +463,7 @@ impl RemoteUi {
                 .clicked()
                 .then_some(RepositoryAction::Cancel);
         }
-        if let Some(notice) = view
-            .notice
-            .filter(|notice| *notice != RemoteNotice::Fetched)
-        {
+        if let Some(notice) = view.notice.filter(|notice| actionable_notice(*notice)) {
             ui.colored_label(p.muted, notice_text(notice, l));
         }
         if view.rebase.in_progress() {
@@ -959,6 +956,22 @@ pub(super) fn notice_text(notice: RemoteNotice, l: Language) -> &'static str {
         N::Timeout => l.local("The operation timed out.", "A operação excedeu o tempo limite."),
         N::Failed => l.local("Remote operation failed.", "A operação remota falhou."),
     }
+}
+
+pub(super) fn has_status(view: &RemotesView) -> bool {
+    view.busy || view.rebase.in_progress() || view.notice.is_some_and(actionable_notice)
+}
+
+fn actionable_notice(notice: RemoteNotice) -> bool {
+    !matches!(
+        notice,
+        RemoteNotice::Updated
+            | RemoteNotice::Fetched
+            | RemoteNotice::Pushed
+            | RemoteNotice::UpToDate
+            | RemoteNotice::Integrated
+            | RemoteNotice::RebaseAborted
+    )
 }
 
 #[cfg(test)]

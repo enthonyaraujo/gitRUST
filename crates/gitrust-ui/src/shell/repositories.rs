@@ -480,19 +480,6 @@ impl ManagerUi {
         if changes.is_none() && self.navigation.tab == Tab::Changes {
             self.navigation.tab = Tab::History;
         }
-        if changes.is_some_and(|changes| changes.busy) || navigation.is_some_and(|view| view.busy) {
-            ui.horizontal_wrapped(|ui| {
-                c::loading(ui, l.local("Working…", "Processando…"), None);
-                if ui.button(l.text(Text::Cancel)).clicked() {
-                    self.action = Some(RepositoryAction::Cancel);
-                }
-            });
-        } else if self.navigation.tab == Tab::Changes
-            && let Some((success, message)) =
-                changes.and_then(|changes| super::changes::notice(changes, l))
-        {
-            ui.colored_label(if success { p.success } else { p.warning }, message);
-        }
         self.workspace_operations(ui, p, l);
         let Some(workspace) = self.view.active.as_ref() else {
             return false;
@@ -532,9 +519,6 @@ impl ManagerUi {
                 }
             }
             Tab::Changes => {
-                if let Some(issue) = self.view.issue {
-                    ui.colored_label(p.error, issue_text(l, issue));
-                }
                 let pending_push = self.pending_push().map(|(remote, count)| {
                     (
                         remote.name.clone(),
@@ -595,32 +579,73 @@ impl ManagerUi {
             return;
         };
         let navigation = self.view.navigation.as_ref();
-        if self.navigation.tab != Tab::Overview
+        let remotes = self.view.remotes.as_ref();
+        let local_busy = self.view.changes.as_ref().is_some_and(|view| view.busy)
+            || navigation.is_some_and(|view| view.busy);
+        let changes_warning = (self.navigation.tab == Tab::Changes && !local_busy)
+            .then(|| super::changes::notice(self.view.changes.as_ref()?, l))
+            .flatten()
+            .and_then(|(success, message)| (!success).then_some(message));
+        let provisioning = self.navigation.tab != Tab::Overview
             && self.view.destination.is_some()
-            && Self::activity(ui, &self.view, l)
+            && !matches!(self.view.activity, Activity::Idle | Activity::Trust);
+        let show_remote_status = remotes.is_some_and(|view| {
+            super::remotes::has_status(view)
+                && !(view.busy && matches!(self.fetch, super::fetch::FetchState::Fetching { .. }))
+        });
+        if local_busy
+            || provisioning
+            || changes_warning.is_some()
+            || self.view.issue.is_some()
+            || navigation.is_some_and(super::navigation::has_status)
+            || show_remote_status
         {
-            self.action = Some(RepositoryAction::Cancel);
+            egui::Panel::bottom("workspace-operation-status")
+                .resizable(false)
+                .exact_size(76.0)
+                .frame(c::panel(p.surface, 4))
+                .show(ui, |ui| {
+                    ScrollArea::vertical().show(ui, |ui| {
+                        if local_busy {
+                            ui.horizontal_wrapped(|ui| {
+                                c::loading(ui, l.local("Working…", "Processando…"), None);
+                                if ui.button(l.text(Text::Cancel)).clicked() {
+                                    self.action = Some(RepositoryAction::Cancel);
+                                }
+                            });
+                        }
+                        if provisioning && Self::activity(ui, &self.view, l) {
+                            self.action = Some(RepositoryAction::Cancel);
+                        }
+                        if let Some(message) = changes_warning {
+                            ui.colored_label(p.warning, message);
+                        }
+                        if let Some(issue) = self.view.issue {
+                            ui.colored_label(p.error, issue_text(l, issue));
+                        }
+                        if let Some(view) = navigation {
+                            self.navigation.status(ui, view, l, p);
+                        }
+                        if let Some(view) = remotes.filter(|_| show_remote_status)
+                            && let Some(action) =
+                                self.remotes.status(ui, view, self.view.progress, l, p)
+                        {
+                            self.action = Some(action);
+                        }
+                    });
+                });
         }
-        if let Some(view) = navigation {
-            self.navigation.status(ui, view, l, p);
-            if let Some(action) = self.navigation.dialog(ui, view, &workspace.checkout, l, p) {
-                self.action = Some(RepositoryAction::Navigate(action));
-            }
+        if let Some(view) = navigation
+            && let Some(action) = self.navigation.dialog(ui, view, &workspace.checkout, l, p)
+        {
+            self.action = Some(RepositoryAction::Navigate(action));
         }
-        if let Some(view) = &self.view.remotes {
-            let toolbar_shows_progress =
-                view.busy && matches!(self.fetch, super::fetch::FetchState::Fetching { .. });
-            let status = if toolbar_shows_progress {
-                None
-            } else {
-                self.remotes.status(ui, view, self.view.progress, l, p)
-            };
-            if let Some(action) = status.or_else(|| {
+        if let Some(view) = remotes
+            && let Some(action) =
                 self.remotes
                     .dialog(ui, view, self.view.github.workspace_account.is_some(), l, p)
-            }) {
-                self.action = Some(action);
-            }
+        {
+            self.action = Some(action);
         }
     }
 

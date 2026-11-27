@@ -377,10 +377,7 @@ impl NavigationUi {
                 }
             });
         }
-        if let Some(notice) = view
-            .notice
-            .filter(|notice| *notice != NavigationNotice::BranchUpdated)
-        {
+        if let Some(notice) = view.notice.filter(|notice| actionable_notice(*notice)) {
             ui.label(notice_text(notice, l));
         }
     }
@@ -820,4 +817,21 @@ fn notice_text(notice: NavigationNotice, l: Language) -> &'static str {
             "O Git recusou a operação. Revise o nome da branch e o estado do repositório.",
         ),
     }
+}
+
+pub(super) fn has_status(view: &NavigationView) -> bool {
+    matches!(view.merge, Merge::Active { .. }) || view.notice.is_some_and(actionable_notice)
+}
+
+fn actionable_notice(notice: NavigationNotice) -> bool {
+    !matches!(
+        notice,
+        NavigationNotice::BranchUpdated
+            | NavigationNotice::Integrated
+            | NavigationNotice::FastForward
+            | NavigationNotice::SquashStaged
+            | NavigationNotice::Stashed
+            | NavigationNotice::MergeCommitted
+            | NavigationNotice::MergeAborted
+    )
 }
