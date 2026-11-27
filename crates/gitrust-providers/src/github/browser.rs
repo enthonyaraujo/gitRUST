@@ -14,6 +14,7 @@ use super::ClientId;
 
 pub const REDIRECT_URI: &str = "gitrust://oauth/callback";
 pub const MAX_CALLBACK_BYTES: usize = 4096;
+const GITHUB_OAUTH_ISSUER: &str = "https://github.com/login/oauth";
 const REQUIRED_SCOPES: [&str; 2] = ["repo", "read:user"];
 
 fn random_value() -> Result<String, Notice> {
@@ -66,7 +67,7 @@ impl BrowserAttempt {
             )
             .append_pair("prompt", "select_account")
             .finish();
-        format!("https://github.com/login/oauth/authorize?{query}")
+        format!("{GITHUB_OAUTH_ISSUER}/authorize?{query}")
     }
 
     #[must_use]
@@ -113,6 +114,7 @@ impl Callback {
             .ok_or(Notice::InvalidInput)?;
         let mut state = None;
         let mut code = None;
+        let mut issuer = None;
         let mut error = None;
         let mut description = None;
         let mut error_uri = None;
@@ -120,6 +122,7 @@ impl Callback {
             let target = match key.as_ref() {
                 "state" => &mut state,
                 "code" => &mut code,
+                "iss" => &mut issuer,
                 "error" => &mut error,
                 "error_description" => &mut description,
                 "error_uri" => &mut error_uri,
@@ -128,6 +131,12 @@ impl Callback {
             if target.replace(value).is_some() {
                 return Err(Notice::InvalidInput);
             }
+        }
+        if issuer
+            .as_deref()
+            .is_some_and(|value| value != GITHUB_OAUTH_ISSUER)
+        {
+            return Err(Notice::InvalidInput);
         }
         let safe = |value: &str| {
             value
@@ -172,6 +181,24 @@ mod tests {
     }
 
     #[test]
+    fn callback_accepts_the_github_issuer_with_the_expected_state() {
+        let attempt = BrowserAttempt::new().expect("random candidate");
+        let uri = format!(
+            "{REDIRECT_URI}?code=fixture-value&state={}&iss=https%3A%2F%2Fgithub.com%2Flogin%2Foauth",
+            attempt.state
+        );
+        let callback = Callback::parse(&uri).expect("GitHub's issuer parameter");
+        assert!(attempt.matches(&callback));
+
+        let denial = format!(
+            "{REDIRECT_URI}?error=access_denied&state={}&iss={GITHUB_OAUTH_ISSUER}",
+            attempt.state
+        );
+        let callback = Callback::parse(&denial).expect("GitHub's issuer on denial");
+        assert_eq!(attempt.exchange_parts(callback), Err(Notice::Denied));
+    }
+
+    #[test]
     fn callback_checks_origin_parameters_state_and_deadline() {
         let mut attempt = BrowserAttempt::new().expect("random candidate");
         let uri = format!("{REDIRECT_URI}?code=fixture-value&state={}", attempt.state);
@@ -180,6 +207,11 @@ mod tests {
             uri.replace("//oauth/", "//oauth@untrusted.invalid/"),
             uri.replace("/callback?", "/callback/other?"),
             format!("{uri}&code=again"),
+            format!("{uri}&iss="),
+            format!("{uri}&iss=https://example.invalid/login/oauth"),
+            format!("{uri}&iss={GITHUB_OAUTH_ISSUER}/"),
+            format!("{uri}&iss={GITHUB_OAUTH_ISSUER}&iss={GITHUB_OAUTH_ISSUER}"),
+            format!("{uri}&unknown=other"),
             format!("{uri}&error=access_denied"),
             format!("{uri}#fragment"),
             uri.replace("fixture-value", "%00"),

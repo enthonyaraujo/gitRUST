@@ -123,7 +123,9 @@ mod tests {
             .expect("state");
         (
             attempt,
-            format!("{REDIRECT_URI}?state={state}&code=fixture-code"),
+            format!(
+                "{REDIRECT_URI}?state={state}&code=fixture-code&iss=https%3A%2F%2Fgithub.com%2Flogin%2Foauth"
+            ),
         )
     }
 
