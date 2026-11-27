@@ -93,6 +93,30 @@ fn token(label: &str) -> Value {
 const CLIENT: &str = "Iv23fixtureId";
 
 #[test]
+fn device_endpoint_not_found_identifies_the_client_only_during_pairing() {
+    let (client, _, worker) = server(vec![
+        reply(
+            "POST",
+            "/login/device/code",
+            404,
+            json!({"error":"Not Found"}),
+        ),
+        reply("GET", "/repos/owner/private-project", 404, json!({})),
+    ]);
+    let stop = Cancellation::default();
+    let id = ClientId::new(CLIENT).expect("fixture client");
+    let result = client.login(&id, &stop, |_| panic!("unexpected device prompt"));
+    assert_eq!(result.expect_err("unregistered app"), Notice::InvalidClient);
+    assert_eq!(
+        client
+            .repository("fixture", &repository(), &stop)
+            .expect_err("missing repository"),
+        Notice::NoAccess
+    );
+    worker.join().expect("fixture requests");
+}
+
+#[test]
 fn device_flow_waits_for_authorization_and_rotates_the_bound_session() {
     let (client, requests, work) = server(vec![
         reply("POST", "/login/device/code", 200, device(15)),

@@ -195,7 +195,11 @@ impl Client {
                 Some(json!({"client_id": client_id.as_str()})),
                 None,
                 stop,
-            )?
+            )
+            .map_err(|error| match error {
+                Notice::NoAccess => Notice::InvalidClient,
+                other => other,
+            })?
             .body;
         if code.verification_uri != super::DEVICE_URL
             || !valid_token(&code.device_code)
