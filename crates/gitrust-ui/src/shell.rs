@@ -5,6 +5,7 @@ mod github;
 mod navigation;
 mod remotes;
 mod repositories;
+mod toolbar;
 mod welcome;
 
 use repositories::{FormKind, ManagerUi};
@@ -12,13 +13,12 @@ use repositories::{FormKind, ManagerUi};
 pub(crate) use dialogs::preferences;
 
 use egui::{
-    Align, Button, CentralPanel, Id, Key, Label, Layout, Modifiers, RichText, ScrollArea,
-    ThemePreference, Ui,
+    Button, CentralPanel, Id, Key, Label, Modifiers, RichText, ScrollArea, ThemePreference, Ui,
 };
 use gitrust_core::{AppEvent, AppState, workspaces::RepositoryAction};
 
 use crate::components::{self as c, Icon, ListSelection, Row};
-use crate::demo::{BRANCHES, COMMITS, FILES, Fixtures, REPOSITORY};
+use crate::demo::{BRANCHES, COMMITS, FILES, Fixtures};
 use crate::diff::{DiffMode, DiffView};
 use crate::gallery::Gallery;
 use crate::i18n::{Language, Text};
@@ -348,36 +348,7 @@ impl Desktop {
         {
             self.toolbar(ui, p, l);
         }
-        if self.screen != Screen::Welcome {
-            c::status_bar(ui, p, |ui| {
-                let status = if let Some(managed) = &self.managed {
-                    if !managed.view.git_available
-                        && managed.view.activity == gitrust_core::workspaces::Activity::Idle
-                    {
-                        l.text(Text::NoGit)
-                    } else if managed.view.active.is_some() {
-                        l.local("Local workspace", "Workspace local")
-                    } else {
-                        l.text(Text::NoRepositoryShort)
-                    }
-                } else if self.screen == Screen::Workspace {
-                    l.text(Text::NoGit)
-                } else {
-                    l.text(Text::DemoHint)
-                };
-                c::status_indicator(ui, status, p.muted);
-                if !compact {
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(
-                            RichText::new(l.text(Text::Telemetry))
-                                .small()
-                                .color(p.muted),
-                        );
-                    });
-                }
-            });
-        }
-        self.workspace(ui, p, l, compact);
+        self.workspace(ui, p, l, compact, &mut events);
         self.dialogs(ui, state, p, l);
         if let Some(managed) = &mut self.managed {
             managed.dialogs(ui, p, l);
@@ -409,227 +380,14 @@ impl Desktop {
         }
     }
 
-    fn repository_button(
+    fn workspace(
         &mut self,
         ui: &mut Ui,
         p: Palette,
         l: Language,
-        initial_popup: Option<DiagnosticView>,
-        width: f32,
+        compact: bool,
+        events: &mut FrameEvents,
     ) {
-        let repository_name = self.managed.as_ref().map(|managed| managed.title(l));
-        let repository = c::context_button(
-            ui,
-            width,
-            Icon::Repo,
-            l.local("Current repository", "Repositório atual"),
-            if self.screen == Screen::Demo {
-                REPOSITORY
-            } else {
-                repository_name
-                    .as_deref()
-                    .unwrap_or(l.text(Text::NoRepositoryShort))
-            },
-            self.options.diagnostics.is_some() || self.managed.is_some(),
-            p,
-        );
-        if self.managed.is_some()
-            && (repository.clicked() || self.open_popup == Some(commands::REPOSITORY_POPUP))
-        {
-            ui.memory_mut(|memory| memory.request_focus(Id::unique("repository-search")));
-        }
-        let popup = anchored_popup(
-            &repository,
-            commands::REPOSITORY_POPUP,
-            self.open_popup == Some(commands::REPOSITORY_POPUP)
-                || initial_popup == Some(DiagnosticView::Repository),
-        );
-        if let Some(managed) = &mut self.managed {
-            popup.show(|ui| managed.popup(ui, p, l));
-        } else if self.options.diagnostics.is_some() {
-            popup.show(|ui| {
-                for (screen, label) in [
-                    (Screen::Workspace, Text::Workspace),
-                    (Screen::Demo, Text::DemoRepo),
-                    (Screen::Gallery, Text::Gallery),
-                ] {
-                    if c::menu_choice(ui, l.text(label), self.screen == screen, p).clicked() {
-                        if screen == Screen::Demo {
-                            self.open_demo();
-                        } else {
-                            self.screen = screen;
-                        }
-                        ui.close();
-                    }
-                }
-            });
-        }
-    }
-
-    fn toolbar(&mut self, ui: &mut Ui, p: Palette, l: Language) {
-        let initial_popup = self.initial_popup.take();
-        let active = self.screen == Screen::Workspace
-            && self
-                .managed
-                .as_ref()
-                .is_some_and(|managed| managed.view.active.is_some());
-        c::toolbar(ui, p, |ui| {
-            let width = ui.available_width();
-            let narrow = width < 470.0;
-            let gap = ui.spacing().item_spacing.x;
-            let repo_width = if narrow {
-                ((width - 2.0 * gap) * 0.35).max(70.0)
-            } else {
-                self.managed
-                    .as_ref()
-                    .filter(|_| active)
-                    .and_then(|manager| manager.sidebar_width)
-                    .map_or_else(
-                        || c::repository_width(width),
-                        |sidebar| sidebar - f32::from(size::MD) - gap,
-                    )
-                    .clamp(135.0, (width * 0.46).max(135.0))
-            };
-            let branch_width = if narrow {
-                ((width - 2.0 * gap) * 0.30).max(65.0)
-            } else {
-                (width * 0.21).clamp(130.0, 220.0)
-            };
-            let remote_width = if narrow {
-                (width - repo_width - branch_width - 2.0 * gap).max(58.0)
-            } else {
-                (width * 0.23).clamp(125.0, 220.0)
-            };
-            self.repository_button(ui, p, l, initial_popup, repo_width);
-            if active || self.screen == Screen::Demo || !narrow {
-                self.branch_button(ui, p, l, branch_width, active, initial_popup);
-            }
-            if let Some(managed) = self.managed.as_mut().filter(|_| active) {
-                use commands::Command;
-                let (action, label, detail) = managed.toolbar_remote(l);
-                let response = c::context_button(
-                    ui,
-                    (remote_width - 26.0).max(44.0),
-                    Icon::Remote,
-                    &label,
-                    &detail,
-                    action.is_some(),
-                    p,
-                );
-                if response.clicked() {
-                    match action {
-                        Some(Command::Fetch) => {
-                            if let Some(intent) = managed.fetch_intent() {
-                                managed.send(RepositoryAction::Remote(intent));
-                            }
-                        }
-                        Some(Command::Github) => {
-                            self.screen = Screen::Github;
-                            managed.github.publish_workspace(&managed.view.github);
-                        }
-                        _ => {}
-                    }
-                }
-                let response = c::icon_button(
-                    ui,
-                    Icon::Chevron,
-                    l.local("Remote settings", "Configurações de remotes"),
-                    p,
-                );
-                anchored_popup(
-                    &response,
-                    remotes::REMOTE_POPUP,
-                    self.open_popup == Some(remotes::REMOTE_POPUP),
-                )
-                .show(|ui| managed.remote_popup(ui, l, p));
-            }
-            if !narrow && ui.available_width() >= 100.0 {
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if c::icon_button(ui, Icon::Settings, l.text(Text::Settings), p).clicked() {
-                        self.dialog = Dialog::Settings;
-                    }
-                    if self.managed.is_some() && ui.button("GitHub").clicked() {
-                        self.screen = if self.screen == Screen::Github {
-                            Screen::Workspace
-                        } else {
-                            Screen::Github
-                        };
-                    }
-                    if self.screen == Screen::Demo || self.screen == Screen::Gallery {
-                        c::badge(ui, l.text(Text::Demo), p.accent, p.selected);
-                    } else if ui.available_width() > 22.0 {
-                        Icon::Mark.show(ui, 21.0, p.accent);
-                    }
-                });
-            }
-        });
-        self.open_popup = None;
-    }
-
-    fn branch_button(
-        &mut self,
-        ui: &mut Ui,
-        p: Palette,
-        l: Language,
-        branch_width: f32,
-        active: bool,
-        initial_popup: Option<DiagnosticView>,
-    ) {
-        let branch = self
-            .demo
-            .as_ref()
-            .filter(|_| self.screen == Screen::Demo)
-            .map(|demo| demo.branch);
-        let caption = branch.map_or_else(
-            || {
-                self.managed
-                    .as_ref()
-                    .and_then(|managed| managed.view.active.as_ref())
-                    .map_or(l.text(Text::NoBranch), |active| match &active.checkout {
-                        gitrust_core::workspaces::Checkout::Branch(name)
-                        | gitrust_core::workspaces::Checkout::Unborn(name)
-                        | gitrust_core::workspaces::Checkout::Detached(name) => name.as_str(),
-                    })
-            },
-            |index| BRANCHES[index],
-        );
-        let response = c::context_button(
-            ui,
-            branch_width,
-            Icon::Branch,
-            l.local("Current branch", "Branch atual"),
-            caption,
-            branch.is_some() || active,
-            p,
-        );
-        if active && (response.clicked() || self.open_popup == Some(commands::BRANCH_POPUP)) {
-            ui.memory_mut(|memory| memory.request_focus(Id::unique("branch-filter")));
-        }
-        let popup = anchored_popup(
-            &response,
-            commands::BRANCH_POPUP,
-            self.open_popup == Some(commands::BRANCH_POPUP)
-                || initial_popup == Some(DiagnosticView::Branch),
-        );
-        if let Some(branch) = branch {
-            popup.show(|ui| {
-                for (index, name) in BRANCHES.iter().enumerate() {
-                    if c::menu_choice(ui, name, index == branch, p).clicked() {
-                        self.switch_branch(index);
-                        ui.close();
-                    }
-                }
-            });
-        } else if let Some(managed) = self.managed.as_mut().filter(|_| active)
-            && popup
-                .show(|ui| managed.branch_popup(ui, l, p))
-                .is_some_and(|result| result.inner)
-        {
-            self.screen = Screen::Github;
-        }
-    }
-
-    fn workspace(&mut self, ui: &mut Ui, p: Palette, l: Language, compact: bool) {
         if self.screen == Screen::Welcome {
             CentralPanel::default()
                 .frame(c::panel(p.background, 0))
@@ -669,7 +427,11 @@ impl Desktop {
             .show(ui, |ui| match self.screen {
                 Screen::Workspace => {
                     if let Some(managed) = &mut self.managed {
-                        managed.workspace(ui, p, l, std::mem::take(&mut self.sidebar_delta));
+                        if let Some(command) =
+                            managed.workspace(ui, p, l, std::mem::take(&mut self.sidebar_delta))
+                        {
+                            self.run_command(ui, events, command);
+                        }
                     } else {
                         self.empty_workspace(ui, p, l);
                     }

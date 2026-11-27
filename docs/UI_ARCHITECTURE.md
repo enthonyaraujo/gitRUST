@@ -6,7 +6,8 @@ The binary owns eframe, wgpu, platform diagnostics, and native window lifecycle.
 | --- | --- |
 | `theme` | Light/Dark palettes, semantic Git colors, dimensions, font roles and embedded font registration |
 | `components` | Shared widget compositions, keyboard-aware virtual lists and shell primitives |
-| `shell` | Workspace, selection, menus, status bar, responsive layout, preferences and dialogs |
+| `shell` | Workspace, selection, responsive layout, preferences and dialogs |
+| `shell::toolbar` | Repository and branch selectors, direct fetch and publish entry points |
 | `shell::commands` | Localized desktop menu order, key bindings, availability and action routing |
 | `diff` | Visual alignment and indexing, unified/split rendering, inline changed spans and copy |
 | `demo` | Read-only sample data and its presentation adapter |
@@ -17,9 +18,9 @@ The binary owns eframe, wgpu, platform diagnostics, and native window lifecycle.
 
 The decorated window retains native move, resize and system controls. The in-window app menu follows the File, Edit, View, Repository, Branch, Help convention and collapses into one menu at narrow widths. The menus are rendered in egui on each desktop platform. The file preview combines navigation and file identity in the compact header to preserve room for the diff. Integration with the native macOS global menu bar is deferred.
 
-An open repository shows the repository and branch selectors first, followed by the applicable fetch, pull, push or publish action and remote settings. Menus and keyboard shortcuts open the same reviewed flows. File manager, terminal, editor, browser and diagnostic log actions are handled outside rendering. The Linux terminal and editor shortcuts use installed native applications from known executable paths. The Help log action exports the current window and graphics diagnostics to the application data directory.
+An open repository shows the repository and branch selectors followed by direct fetch or publish. Remote settings, pull and push are available in the Repository menu. The View menu opens the GitHub workspace and the File menu opens application options. Menus and keyboard shortcuts open the same reviewed flows. File manager, terminal, editor, browser and diagnostic log actions are handled outside rendering. The Linux terminal and editor shortcuts use installed native applications from known executable paths. The Help log action exports the current window and graphics diagnostics to the application data directory.
 
-Changes and History share a resizable sidebar. The Changes composer has a fixed submit control while its fields and the file list scroll separately. Short file panels group stage, unstage and discard under Index actions. At very small logical viewport sizes, single-pane tabs keep the list, diff and composer reachable. The clean worktree lists available editor, file manager and GitHub actions in the main pane. Menus, selectors and dialogs constrain their content to the viewport, including at 200% scale. The existing palette, typography and accessible widget labels apply throughout.
+Changes and History share a resizable sidebar that starts at 250 logical points. File checkboxes reflect staging in the Git index. The composer avatar opens author and signing controls, and co-authors are added as editable trailers in the commit description. The Changes composer has a fixed submit control while its fields and the file list scroll separately. Short file panels group stage, unstage and discard under Index actions. At very small logical viewport sizes, single-pane tabs keep the list, diff and composer reachable. The clean worktree lists available editor, file manager and GitHub actions in the main pane. Menus, selectors and dialogs constrain their content to the viewport, including at 200% scale. The existing palette, typography and accessible widget labels apply throughout.
 
 The regular workspace starts empty with Options available. Diagnostic mode exposes the gallery and sample workspace and clearly identifies sample data. The diagnostic composer edits only its in-memory draft. Interactive launches persist theme, locale and scale as local preferences.
 

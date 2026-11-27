@@ -811,8 +811,35 @@ fn divergence(ahead: u64, behind: u64, l: Language) -> String {
     format!("{value} · ↑ {ahead} ↓ {behind}")
 }
 
-pub(super) fn last_fetch_text(seconds: u64, l: Language) -> String {
-    format!("{} {}", l.local("Last fetch", "Último fetch"), utc(seconds))
+pub(super) fn last_fetch_text(ctx: &egui::Context, seconds: u64, l: Language) -> String {
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    let age = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        .saturating_sub(seconds);
+    let (unit, suffix) = match age {
+        0..60 => (60, l.local("just now", "agora mesmo").to_owned()),
+        60..3600 => (60, format!("{} min", age / 60)),
+        3600..86400 => (3600, format!("{} h", age / 3600)),
+        _ => {
+            return format!(
+                "{} {} UTC",
+                l.local("Last fetch:", "Última busca:"),
+                utc(seconds)
+            );
+        }
+    };
+    ctx.request_repaint_after(Duration::from_secs(unit - age % unit));
+    if age < 60 {
+        format!("{} {suffix}", l.local("Last fetch:", "Última busca:"))
+    } else {
+        match l {
+            Language::English => format!("Last fetch: {suffix} ago"),
+            Language::Portuguese => format!("Última busca: há {suffix}"),
+        }
+    }
 }
 
 fn utc(seconds: u64) -> String {

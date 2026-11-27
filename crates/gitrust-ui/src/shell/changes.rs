@@ -1,3 +1,5 @@
+mod composer;
+
 use std::{
     collections::{BTreeSet, HashSet},
     path::PathBuf,
@@ -49,6 +51,8 @@ pub(super) struct ChangesUi {
     filtered: Vec<usize>,
     counts: [usize; 4],
     file_count: usize,
+    filtered_staged: usize,
+    filtered_eligible: usize,
     focus: Option<Id>,
     reveal_filter: bool,
     selected: HashSet<ChangeKey>,
@@ -60,6 +64,7 @@ pub(super) struct ChangesUi {
     prefill: Option<Arc<CommitDraft>>,
     seen_version: Option<u64>,
     author_dialog: bool,
+    coauthor: Option<composer::Coauthor>,
     amend_confirmation: Option<u64>,
     submitted: bool,
 }
@@ -147,7 +152,10 @@ impl ChangesUi {
             command = discard_dialog(ui, review, enabled, l, p).or(command);
         }
         if self.author_dialog {
-            self.show_author(ui, l, p);
+            command = self.show_author(ui, workspace, l, p).or(command);
+        }
+        if self.coauthor.is_some() {
+            self.show_coauthor(ui, l, p);
         }
         if self.amend_confirmation == Some(view.version) {
             command = self.confirm_amend(ui, enabled, l, p).or(command);
@@ -264,15 +272,13 @@ impl ChangesUi {
                 l.local("changed files", "arquivos alterados")
             )
         };
-        if view.rows.is_empty() && !self.reveal_filter {
-            c::panel(p.background, 4).show(ui, |ui| {
-                ui.vertical_centered_justified(|ui| {
-                    ui.colored_label(p.muted, count);
-                });
-            });
-            return None;
+        if std::mem::take(&mut self.query_dirty) {
+            self.filter(&view.rows);
         }
-        let compact = ui.available_height() < 175.0 || ui.available_width() < 245.0;
+        let mut action = self.file_header(ui, view, &count, l, p);
+        if view.rows.is_empty() && !self.reveal_filter {
+            return action;
+        }
         let search = Id::unique("changes-search");
         if self.focus == Some(search) {
             ui.memory_mut(|memory| memory.request_focus(search));
@@ -284,27 +290,15 @@ impl ChangesUi {
         if std::mem::take(&mut self.query_dirty) {
             self.filter(&view.rows);
         }
-        let mut action = None;
-        ui.horizontal_wrapped(|ui| {
-            self.select_filtered(ui, view, &count, l);
-            if compact && !view.rows.is_empty() {
-                action = ui
-                    .menu_button(l.local("Index actions", "Ações do index"), |ui| {
-                        let action = self.file_actions(ui, view, l);
-                        if action.is_some() {
-                            ui.close();
-                        }
-                        action
-                    })
-                    .inner
-                    .flatten();
-            }
-        });
-        if !compact {
-            self.count_badges(ui, l, p);
-            action = self.file_actions(ui, view, l);
+        if !view.rows.is_empty() {
+            ui.menu_button(l.local("Index actions", "Ações do index"), |ui| {
+                self.count_badges(ui, l, p);
+                if let Some(command) = self.file_actions(ui, view, l) {
+                    action = Some(command);
+                    ui.close();
+                }
+            });
         }
-        ui.separator();
         if self.filtered.is_empty() {
             ui.label(
                 RichText::new(if view.rows.is_empty() {
@@ -322,8 +316,8 @@ impl ChangesUi {
                 for index in visible {
                     let row = &view.rows[self.filtered[index]];
                     ui.push_id(&row.key, |ui| {
-                        if self.file_row(ui, row, l, p) {
-                            action = Some(ChangesCommand::Preview(row.key.clone()));
+                        if let Some(command) = self.file_row(ui, row, l, p) {
+                            action = Some(command);
                         }
                     });
                 }
@@ -331,29 +325,62 @@ impl ChangesUi {
         action
     }
 
-    fn select_filtered(&mut self, ui: &mut Ui, view: &ChangesView, label: &str, l: Language) {
-        let mut all = !self.filtered.is_empty()
-            && self
+    fn file_header(
+        &self,
+        ui: &mut Ui,
+        view: &ChangesView,
+        count: &str,
+        l: Language,
+        p: Palette,
+    ) -> Option<ChangesCommand> {
+        let all_staged =
+            self.filtered_eligible > 0 && self.filtered_staged == self.filtered_eligible;
+        let mut checked = all_staged;
+        let label = l.local(
+            "Include all filtered files in commit",
+            "Incluir todos os arquivos filtrados no commit",
+        );
+        let header = c::panel(p.elevated, 4).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let response = ui
+                    .add_enabled(
+                        self.filtered_eligible > 0,
+                        egui::Checkbox::without_text(&mut checked)
+                            .indeterminate(self.filtered_staged > 0 && !all_staged),
+                    )
+                    .accessible_name(label)
+                    .on_hover_text(label);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), 24.0),
+                    egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+                    |ui| ui.colored_label(p.text, count),
+                );
+                response.changed()
+            })
+            .inner
+        });
+        let rect = header.response.rect;
+        ui.painter().line_segment(
+            [rect.left_bottom(), rect.right_bottom()],
+            egui::Stroke::new(1.0, p.divider),
+        );
+        header.inner.then(|| {
+            let keys = self
                 .filtered
                 .iter()
-                .all(|&index| self.selected.contains(&view.rows[index].key));
-        if ui
-            .add_enabled(
-                !self.filtered.is_empty(),
-                egui::Checkbox::new(&mut all, label),
-            )
-            .on_hover_text(l.local("Select filtered files", "Selecionar arquivos filtrados"))
-            .changed()
-        {
-            for &index in &self.filtered {
-                let key = &view.rows[index].key;
-                if all {
-                    self.selected.insert(key.clone());
-                } else {
-                    self.selected.remove(key);
-                }
+                .map(|&index| &view.rows[index].key)
+                .filter(|key| {
+                    key.side != ChangeSide::Conflict
+                        && (key.side == ChangeSide::Staged) == all_staged
+                })
+                .cloned()
+                .collect();
+            if all_staged {
+                ChangesCommand::Unstage(keys)
+            } else {
+                ChangesCommand::Stage(keys)
             }
-        }
+        })
     }
 
     fn count_badges(&self, ui: &mut Ui, l: Language, p: Palette) {
@@ -395,28 +422,45 @@ impl ChangesUi {
                 })
                 .map(|(index, _)| index)
                 .collect();
+        self.filtered_staged = self
+            .filtered
+            .iter()
+            .filter(|&&i| rows[i].key.side == ChangeSide::Staged)
+            .count();
+        self.filtered_eligible = self
+            .filtered
+            .iter()
+            .filter(|&&i| rows[i].key.side != ChangeSide::Conflict)
+            .count();
     }
 
-    fn file_row(&mut self, ui: &mut Ui, row: &ChangedPath, l: Language, p: Palette) -> bool {
+    fn file_row(
+        &mut self,
+        ui: &mut Ui,
+        row: &ChangedPath,
+        l: Language,
+        p: Palette,
+    ) -> Option<ChangesCommand> {
         let path = row.key.path.to_string_lossy();
         ui.horizontal(|ui| {
             ui.set_min_height(24.0);
-            let mut selected = self.selected.contains(&row.key);
-            let response = ui.checkbox(&mut selected, "");
-            response.widget_info(|| {
-                egui::WidgetInfo::selected(
-                    egui::Role::CheckBox,
-                    ui.is_enabled(),
-                    selected,
-                    format!("{} {path}", l.local("Select", "Selecionar")),
-                )
-            });
-            if response.changed() {
-                if selected {
-                    self.selected.insert(row.key.clone());
+            let mut staged = row.key.side == ChangeSide::Staged;
+            let label = match row.key.side {
+                ChangeSide::Staged => l.local("Unstage", "Retirar"),
+                ChangeSide::Conflict => l.local("Stage resolution", "Preparar resolução"),
+                _ => l.local("Stage", "Preparar"),
+            };
+            let check = ui
+                .add(egui::Checkbox::without_text(&mut staged))
+                .accessible_name(format!("{label} {path}"))
+                .on_hover_text(label);
+            if check.changed() {
+                let keys = vec![row.key.clone()];
+                return Some(if staged {
+                    ChangesCommand::Stage(keys)
                 } else {
-                    self.selected.remove(&row.key);
-                }
+                    ChangesCommand::Unstage(keys)
+                });
             }
             ui.label(
                 RichText::new(row.status.to_string())
@@ -427,8 +471,7 @@ impl ChangesUi {
             let caption = format!("{layer} · {path}");
             let response = ui
                 .add(
-                    egui::Button::selectable(self.current.as_ref() == Some(&row.key), &caption)
-                        .truncate(),
+                    egui::Button::selectable(self.selected.contains(&row.key), &caption).truncate(),
                 )
                 .on_hover_text(if let Some(old) = &row.from {
                     format!("{layer} · {} → {path}", old.to_string_lossy())
@@ -436,12 +479,20 @@ impl ChangesUi {
                     caption
                 });
             if response.clicked() {
+                if ui.input(|i| i.modifiers.command) {
+                    if !self.selected.remove(&row.key) {
+                        self.selected.insert(row.key.clone());
+                    }
+                } else {
+                    self.selected.clear();
+                    self.selected.insert(row.key.clone());
+                }
                 self.current = Some(row.key.clone());
                 self.partial.clear();
                 self.pane = Pane::Diff;
-                return true;
+                return Some(ChangesCommand::Preview(row.key.clone()));
             }
-            false
+            None
         })
         .inner
     }
@@ -594,126 +645,6 @@ impl ChangesUi {
         action
     }
 
-    fn composer(
-        &mut self,
-        ui: &mut Ui,
-        workspace: &Workspace,
-        l: Language,
-        p: Palette,
-        enabled: bool,
-    ) -> Option<ChangesCommand> {
-        let branch = match &workspace.checkout {
-            Checkout::Branch(branch) | Checkout::Unborn(branch) => branch.as_str(),
-            Checkout::Detached(_) => l.local("Detached HEAD", "HEAD destacado"),
-        };
-        let staged = workspace.changes.map_or(0, |counts| counts.staged);
-        let valid = enabled
-            && !self.draft.title.trim().is_empty()
-            && (staged > 0 || self.draft.amend)
-            && !matches!(workspace.checkout, Checkout::Detached(_))
-            && workspace
-                .changes
-                .is_none_or(|counts| counts.conflicted == 0);
-        let label = if self.draft.amend {
-            l.local("Review amend", "Revisar emenda").to_owned()
-        } else {
-            format!("{} {branch}", l.local("Commit to", "Commit em"))
-        };
-        let commit = Panel::bottom("commit-submission")
-            .exact_size(31.0)
-            .frame(c::panel(p.surface, 1))
-            .show(ui, |ui| {
-                ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
-                    ui.add_enabled_ui(valid, |ui| c::primary(ui, &label, p))
-                        .inner
-                        .on_disabled_hover_text(l.local(
-                            "Enter a summary and stage the files to commit.",
-                            "Preencha o resumo e prepare os arquivos para o commit.",
-                        ))
-                        .clicked()
-                })
-                .inner
-            })
-            .inner;
-        let form_action = ScrollArea::vertical()
-            .id_salt("commit-fields")
-            .show(ui, |ui| {
-                ui.add_enabled_ui(enabled, |ui| self.composer_fields(ui, workspace, l, p))
-                    .inner
-            })
-            .inner;
-        if commit {
-            if self.draft.amend {
-                self.amend_confirmation = self.seen_version;
-            } else {
-                return Some(ChangesCommand::Commit(self.make_draft()));
-            }
-        }
-        form_action
-    }
-
-    fn composer_fields(
-        &mut self,
-        ui: &mut Ui,
-        workspace: &Workspace,
-        l: Language,
-        p: Palette,
-    ) -> Option<ChangesCommand> {
-        let id = Id::unique("commit-summary");
-        if self.focus == Some(id) {
-            self.focus = None;
-            ui.memory_mut(|memory| memory.request_focus(id));
-        }
-        c::text_field(
-            ui,
-            id,
-            l.local("Summary (required)", "Resumo (obrigatório)"),
-            &mut self.draft.title,
-        );
-        c::text_area(
-            ui,
-            Id::unique("commit-description"),
-            l.local("Description", "Descrição"),
-            &mut self.draft.description,
-        );
-        ui.horizontal_wrapped(|ui| {
-            if ui
-                .button(l.local("Author and signing", "Autoria e assinatura"))
-                .clicked()
-            {
-                self.author_dialog = true;
-            }
-            if matches!(workspace.checkout, Checkout::Branch(_)) {
-                if self.draft.amend {
-                    if ui
-                        .button(l.local("Leave amend", "Sair da emenda"))
-                        .clicked()
-                    {
-                        self.draft.amend = false;
-                    }
-                } else if ui
-                    .button(l.local("Load last commit", "Carregar último commit"))
-                    .clicked()
-                {
-                    return Some(ChangesCommand::LoadAmend);
-                }
-            }
-            let signer = match self.signed {
-                Signing::None => None,
-                Signing::OpenPgp => Some("GPG"),
-                Signing::Ssh => Some("SSH"),
-            };
-            if let Some(signer) = signer {
-                ui.colored_label(
-                    p.accent,
-                    format!("{} {signer}", l.local("Signing with", "Assinatura com")),
-                );
-            }
-            None
-        })
-        .inner
-    }
-
     fn make_draft(&self) -> CommitDraft {
         let mut draft = self.draft.clone();
         draft.signing = match self.signed {
@@ -724,7 +655,14 @@ impl ChangesUi {
         draft
     }
 
-    fn show_author(&mut self, ui: &Ui, l: Language, p: Palette) {
+    fn show_author(
+        &mut self,
+        ui: &Ui,
+        workspace: &Workspace,
+        l: Language,
+        p: Palette,
+    ) -> Option<ChangesCommand> {
+        let mut action = None;
         let modal = c::modal(
             ui,
             "commit-author",
@@ -769,12 +707,28 @@ impl ChangesUi {
                         false,
                     ),
                 }
+                if matches!(workspace.checkout, Checkout::Branch(_)) {
+                    if self.draft.amend {
+                        if ui
+                            .button(l.local("Leave amend", "Sair da emenda"))
+                            .clicked()
+                        {
+                            self.draft.amend = false;
+                        }
+                    } else if ui
+                        .button(l.local("Edit last commit", "Editar último commit"))
+                        .clicked()
+                    {
+                        action = Some(ChangesCommand::LoadAmend);
+                    }
+                }
                 c::primary(ui, l.local("Done", "Concluir"), p).clicked()
             },
         );
-        if modal.inner || modal.should_close() {
+        if action.is_some() || modal.inner || modal.should_close() {
             self.author_dialog = false;
         }
+        action
     }
 
     fn confirm_amend(

@@ -413,7 +413,7 @@ fn filters_keep_a_selected_file_key_only_while_it_is_present() {
 }
 
 #[test]
-fn inline_composer_exposes_unavailability_above_the_status_bar() {
+fn inline_demo_composer_exposes_unavailability() {
     let ctx = Context::default();
     ctx.enable_accesskit();
     let mut shell = Desktop::new(
@@ -452,7 +452,7 @@ fn inline_composer_exposes_unavailability_above_the_status_bar() {
         }
     }
     assert!(
-        hint_bounds.is_some_and(|rect| rect.y1 < 742.0),
+        hint_bounds.is_some_and(|rect| rect.y1 <= 768.0),
         "{hint_bounds:?}"
     );
     assert!(commit_disabled);
@@ -669,4 +669,56 @@ fn press_fetch_toolbar(ctx: &Context, shell: &mut Desktop) -> f64 {
         time += 0.1;
     }
     time
+}
+
+#[test]
+fn clean_workspace_shortcuts_dispatch_the_advertised_actions() {
+    use gitrust_core::{
+        github::{Action, RepositoryKey},
+        workspaces::{Activity, Checkout, DesktopTool, RepositoryView, Workspace},
+    };
+
+    let ctx = Context::default();
+    let mut shell = Desktop::new(&ctx, UiOptions::default());
+    shell.enable_repository_management();
+    let path = std::path::PathBuf::from("/fixture");
+    let mut view = RepositoryView {
+        git_available: true,
+        activity: Activity::Idle,
+        active: Some(Workspace {
+            path: path.clone(),
+            checkout: Checkout::Branch("main".into()),
+            has_remote: true,
+            changes: None,
+        }),
+        ..Default::default()
+    };
+    view.github.workspace_repo = RepositoryKey::new("fixture", "example");
+    shell.set_repository_view(view);
+    let modifiers = Modifiers::CTRL
+        .plus(Modifiers::COMMAND)
+        .plus(Modifiers::SHIFT);
+    let mut press = |key_code| {
+        let _ = render(
+            &ctx,
+            &mut shell,
+            RawInput {
+                events: vec![key(key_code, modifiers)],
+                ..input(0.0)
+            },
+        );
+        shell.take_repository_action()
+    };
+    if cfg!(target_os = "linux") {
+        assert!(matches!(
+            press(Key::A),
+            Some(RepositoryAction::OpenDesktopTool { tool: DesktopTool::Editor, path: actual })
+                if actual == path
+        ));
+    }
+    assert!(matches!(press(Key::F), Some(RepositoryAction::Reveal(actual)) if actual == path));
+    assert!(matches!(
+        press(Key::G),
+        Some(RepositoryAction::Github(Action::Open(url))) if url == "https://github.com/fixture/example"
+    ));
 }

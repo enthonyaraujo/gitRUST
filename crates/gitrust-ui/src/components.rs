@@ -40,9 +40,12 @@ pub(crate) fn primary(ui: &mut Ui, label: &str, p: Palette) -> Response {
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Icon {
     Repo,
+    Lock,
+    Folder,
     Back,
     Branch,
     Remote,
+    Sync,
     Chevron,
     Settings,
     Search,
@@ -79,6 +82,16 @@ impl Icon {
                 line(0.24, 0.5, 0.49, 0.25);
                 line(0.24, 0.5, 0.49, 0.75);
             }
+            Self::Lock => {
+                rect(0.18, 0.45, 0.82, 0.88);
+                rect(0.31, 0.12, 0.69, 0.45);
+            }
+            Self::Folder => {
+                rect(0.07, 0.34, 0.93, 0.80);
+                line(0.07, 0.34, 0.07, 0.21);
+                line(0.07, 0.21, 0.39, 0.21);
+                line(0.39, 0.21, 0.49, 0.34);
+            }
             Self::Repo => {
                 rect(0.12, 0.22, 0.88, 0.8);
                 line(0.3, 0.22, 0.3, 0.8);
@@ -106,6 +119,7 @@ impl Icon {
                 line(0.25, 0.40, 0.50, 0.64);
                 line(0.50, 0.64, 0.75, 0.40);
             }
+            Self::Sync => Self::paint_sync(pen, r, stroke),
             Self::Remote => {
                 line(0.18, 0.35, 0.82, 0.35);
                 line(0.63, 0.16, 0.82, 0.35);
@@ -139,6 +153,27 @@ impl Icon {
                 line(0.65, 0.13, 0.65, 0.25);
                 line(0.13, 0.65, 0.25, 0.65);
             }
+        }
+    }
+
+    fn paint_sync(pen: &egui::Painter, rect: Rect, stroke: Stroke) {
+        let at = |x, y| rect.min + vec2(x, y) * rect.width();
+        for sign in [1.0_f32, -1.0] {
+            let point = |x, y| at(0.5 + sign * x, 0.5 + sign * y);
+            pen.add(egui::Shape::line(
+                vec![
+                    point(-0.38, -0.08),
+                    point(-0.27, -0.31),
+                    point(-0.04, -0.40),
+                    point(0.21, -0.34),
+                    point(0.36, -0.14),
+                ],
+                stroke,
+            ));
+            pen.add(egui::Shape::line(
+                vec![point(0.12, -0.14), point(0.36, -0.14), point(0.36, -0.39)],
+                stroke,
+            ));
         }
     }
 }
@@ -301,9 +336,9 @@ pub(crate) fn full_width_tabs<T: Copy + PartialEq>(
     p: Palette,
 ) {
     ui.horizontal(|ui| {
-        let gap = ui.spacing().item_spacing.x;
+        ui.spacing_mut().item_spacing.x = 0.0;
         let count = f32::from(u16::try_from(options.len()).unwrap_or(u16::MAX).max(1));
-        let width = (ui.available_width() + gap) / count - gap;
+        let width = ui.available_width() / count;
         for &(value, label) in options {
             if tab(ui, label, *current == value, width, p) {
                 *current = value;
@@ -317,12 +352,20 @@ fn tab(ui: &mut Ui, label: &str, selected: bool, width: f32, p: Palette) -> bool
         RichText::new(label)
             .family(weight())
             .color(if selected { p.accent } else { p.muted });
-    let response = flat_button(ui, Button::new(text).truncate(), selected, width, p);
+    let response = flat_button(
+        ui,
+        Button::new(text).truncate(),
+        selected && width == 0.0,
+        width,
+        p,
+    );
     response.widget_info(|| WidgetInfo::labeled(Role::Tab, ui.is_enabled(), label));
     ui.ctx()
         .accesskit_node_builder(response.id, |node| node.set_selected(selected));
     if selected {
-        let bottom = response.rect.shrink2(vec2(5.0, 0.0));
+        let bottom = response
+            .rect
+            .shrink2(vec2(if width > 0.0 { 0.0 } else { 5.0 }, 1.0));
         ui.painter().line_segment(
             [bottom.left_bottom(), bottom.right_bottom()],
             Stroke::new(2.0, p.accent),
@@ -410,10 +453,6 @@ pub(crate) fn workspace_row(
     response
 }
 
-pub(crate) fn repository_width(width: f32) -> f32 {
-    (width * 0.29).clamp(230.0, 324.0)
-}
-
 pub(crate) fn context_button(
     ui: &mut Ui,
     width: f32,
@@ -424,7 +463,7 @@ pub(crate) fn context_button(
     p: Palette,
 ) -> Response {
     let (rect, response) = ui.allocate_exact_size(
-        vec2(width, 42.0),
+        vec2(width, 50.0),
         if interactive {
             Sense::click()
         } else {
@@ -443,16 +482,21 @@ pub(crate) fn context_button(
             StrokeKind::Inside,
         );
     }
-    let left = rect.min.x + if width >= 105.0 { 29.0 } else { 6.0 };
+    painter.vline(
+        rect.right() - 0.5,
+        rect.y_range(),
+        Stroke::new(1.0, p.divider),
+    );
+    let left = rect.min.x + if width >= 105.0 { 37.0 } else { 6.0 };
     if width >= 105.0 {
-        let origin = pos2(rect.min.x + 5.0, rect.center().y - size::ICON * 0.5);
+        let origin = pos2(rect.min.x + 11.0, rect.center().y - size::ICON * 0.5);
         icon.paint(
             &painter,
             Rect::from_min_size(origin, Vec2::splat(size::ICON)),
             p.muted,
         );
     }
-    let dropdown = interactive && matches!(icon, Icon::Repo | Icon::Branch);
+    let dropdown = interactive && matches!(icon, Icon::Folder | Icon::Lock | Icon::Branch);
     let right = if dropdown {
         Icon::Chevron.paint(
             &painter,
@@ -466,8 +510,8 @@ pub(crate) fn context_button(
     } else {
         rect.right() - 6.0
     };
-    let remote = matches!(icon, Icon::Remote);
-    for (text, strong, y) in [(label, remote, 5.0), (value, !remote, 21.0)] {
+    let remote = matches!(icon, Icon::Sync);
+    for (text, strong, y) in [(label, remote, 8.0), (value, !remote, 25.0)] {
         let (color, font) = if strong {
             (
                 if interactive { p.text } else { p.disabled },
@@ -514,7 +558,7 @@ pub(crate) fn repository_sidebar(
     adjust_panel(ui, "repository-sidebar", delta);
     Panel::left("repository-sidebar")
         .resizable(true)
-        .default_size(repository_width(width).clamp(min, max))
+        .default_size(250.0_f32.clamp(min, max))
         .size_range(min..=max)
         .frame(panel(p.surface, size::SM))
         .show(ui, body)
@@ -529,16 +573,9 @@ pub(crate) fn panel(fill: Color32, padding: i8) -> Frame {
 
 pub(crate) fn toolbar(ui: &mut Ui, p: Palette, body: impl FnOnce(&mut Ui)) {
     Panel::top("workspace-toolbar")
-        .frame(panel(p.surface, 0).inner_margin(Margin::symmetric(size::MD, 5)))
+        .frame(panel(p.surface, 0))
         .show(ui, |ui| {
-            ui.horizontal_wrapped(body);
-        });
-}
-
-pub(crate) fn status_bar(ui: &mut Ui, p: Palette, body: impl FnOnce(&mut Ui)) {
-    Panel::bottom("workspace-status")
-        .frame(panel(p.surface, 0).inner_margin(Margin::symmetric(size::MD, size::XS)))
-        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
             ui.horizontal(body);
         });
 }

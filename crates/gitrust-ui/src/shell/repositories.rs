@@ -1,3 +1,5 @@
+mod landing;
+
 use std::path::{Component, Path, PathBuf};
 
 use egui::{Button, Id, RichText, ScrollArea, ThemePreference, Ui};
@@ -194,19 +196,28 @@ impl ManagerUi {
         ui.set_width((ui.ctx().content_rect().width() - 24.0).clamp(160.0, 310.0));
         c::search(ui, Id::unique("repository-search"), l, p, &mut self.query);
         ui.separator();
+        let search = self.query.trim().to_lowercase();
         self.recents(
             ui,
+            &search,
             p,
             l,
             (ui.ctx().content_rect().height() * 0.42).clamp(50.0, 220.0),
         );
         ui.separator();
-        self.form_buttons(ui, p, l, false);
+        self.form_buttons(ui, l);
     }
 
-    pub(super) fn workspace(&mut self, ui: &mut Ui, p: Palette, l: Language, delta: f32) {
-        if self.real_changes(ui, p, l, delta) {
-            return;
+    pub(super) fn workspace(
+        &mut self,
+        ui: &mut Ui,
+        p: Palette,
+        l: Language,
+        delta: f32,
+    ) -> Option<Command> {
+        let mut command = None;
+        if self.real_changes(ui, p, l, delta, &mut command) {
+            return command;
         }
         ScrollArea::vertical()
             .id_salt("repository-workspace")
@@ -242,41 +253,10 @@ impl ManagerUi {
                     }
                     self.summary(ui, p, l, &workspace);
                 } else {
-                    ui.add_space((ui.available_height() * 0.10).clamp(4.0, 26.0));
-                    ui.vertical_centered(|ui| {
-                        ui.set_max_width(415.0);
-                        c::empty(
-                            ui,
-                            c::Icon::Repo,
-                            l.text(Text::NoRepository),
-                            l.local(
-                                "Open an existing workspace or start a new repository.",
-                                "Abra um workspace existente ou comece um repositório.",
-                            ),
-                            p,
-                        );
-                        ui.add_space(12.0);
-                        if self.view.activity != Activity::Starting && !self.view.git_available {
-                            if ui
-                                .button(l.local("Retry Git discovery", "Buscar Git novamente"))
-                                .clicked()
-                            {
-                                self.send(RepositoryAction::RetryGit);
-                            }
-                        } else {
-                            self.form_buttons(ui, p, l, true);
-                        }
-                    });
-                    if !self.view.recent.paths.is_empty() {
-                        ui.add_space(14.0);
-                        ui.label(
-                            RichText::new(l.local("Recent repositories", "Repositórios recentes"))
-                                .family(weight()),
-                        );
-                        self.recents(ui, p, l, 156.0);
-                    }
+                    self.empty_landing(ui, p, l);
                 }
             });
+        None
     }
 
     pub(super) fn remote_dialog(&self, action: Command) -> Option<RemoteDialog> {
@@ -356,7 +336,11 @@ impl ManagerUi {
         })
     }
 
-    pub(super) fn toolbar_remote(&self, l: Language) -> (Option<Command>, String, String) {
+    pub(super) fn toolbar_remote(
+        &self,
+        ctx: &egui::Context,
+        l: Language,
+    ) -> (Option<Command>, String, String) {
         let Some(view) = &self.view.remotes else {
             return (
                 None,
@@ -387,7 +371,7 @@ impl ManagerUi {
             .iter()
             .find(|(name, _)| name == &remote.name)
         {
-            super::remotes::last_fetch_text(*time, l)
+            super::remotes::last_fetch_text(ctx, *time, l)
         } else {
             l.local("Ready to fetch", "Pronto para buscar").into()
         };
@@ -484,7 +468,14 @@ impl ManagerUi {
         false
     }
 
-    fn real_changes(&mut self, ui: &mut Ui, p: Palette, l: Language, delta: f32) -> bool {
+    fn real_changes(
+        &mut self,
+        ui: &mut Ui,
+        p: Palette,
+        l: Language,
+        delta: f32,
+        command: &mut Option<Command>,
+    ) -> bool {
         if self.view.active.is_none() {
             return false;
         }
@@ -551,9 +542,8 @@ impl ManagerUi {
                 if let Some(issue) = self.view.issue {
                     ui.colored_label(p.error, issue_text(l, issue));
                 }
-                if let Some(changes) = changes {
-                    let mut clean_action = None;
-                    if let Some(intent) = self.changes.show(
+                if let Some(changes) = changes
+                    && let Some(intent) = self.changes.show(
                         ui,
                         workspace,
                         changes,
@@ -562,18 +552,16 @@ impl ManagerUi {
                             && self.view.remotes.as_ref().is_none_or(|view| !view.busy),
                         &mut layout,
                         |ui| {
-                            clean_action = clean_workspace(ui, p, l, &self.view);
+                            *command = landing::clean_workspace(ui, p, l, &self.view);
                         },
-                    ) {
-                        self.action = Some(RepositoryAction::Changes(intent));
-                    }
-                    if clean_action.is_some() {
-                        self.action = clean_action;
-                    }
+                    )
+                {
+                    self.action = Some(RepositoryAction::Changes(intent));
                 }
             }
         }
         if priority.is_some() {
+            *command = None;
             self.action = priority;
         }
         if self.navigation.tab != layout.tab {
@@ -703,8 +691,7 @@ impl ManagerUi {
         }
     }
 
-    fn recents(&mut self, ui: &mut Ui, p: Palette, l: Language, height: f32) {
-        let search = self.query.trim().to_lowercase();
+    fn recents(&mut self, ui: &mut Ui, search: &str, p: Palette, l: Language, height: f32) {
         let active = self.view.active.as_ref().map(|workspace| &workspace.path);
         let enabled = self.usable();
         let mut clicked = None;
@@ -714,8 +701,8 @@ impl ManagerUi {
                 let name = filename(path);
                 let full = path.to_string_lossy();
                 if !search.is_empty()
-                    && !name.to_lowercase().contains(&search)
-                    && !full.to_lowercase().contains(&search)
+                    && !name.to_lowercase().contains(search)
+                    && !full.to_lowercase().contains(search)
                 {
                     continue;
                 }
@@ -764,17 +751,12 @@ impl ManagerUi {
         }
     }
 
-    fn form_buttons(&mut self, ui: &mut Ui, p: Palette, l: Language, primary_open: bool) {
+    fn form_buttons(&mut self, ui: &mut Ui, l: Language) {
         ui.add_enabled_ui(self.usable(), |ui| {
             ui.horizontal_wrapped(|ui| {
                 let label = l.local("Add local repository", "Adicionar repositório local");
-                let open = if primary_open {
-                    c::primary(ui, label, p)
-                } else {
-                    ui.button(label)
-                };
                 for (response, kind) in [
-                    (open, FormKind::Open),
+                    (ui.button(label), FormKind::Open),
                     (ui.button(l.local("Create", "Criar")), FormKind::Create),
                     (ui.button(l.local("Clone", "Clonar")), FormKind::Clone),
                 ] {
@@ -1068,113 +1050,6 @@ fn issue_text(l: Language, issue: WorkspaceIssue) -> &'static str {
         WorkspaceIssue::DesktopToolFailed => l.local("Could not open the desktop application. Check that it is installed.", "Não foi possível abrir o aplicativo. Confira se ele está instalado."),
         WorkspaceIssue::FolderActionFailed => l.local("The system could not open the folder.", "O sistema não conseguiu abrir a pasta."),
     }
-}
-
-fn clean_workspace(
-    ui: &mut Ui,
-    p: Palette,
-    l: Language,
-    view: &RepositoryView,
-) -> Option<RepositoryAction> {
-    let workspace = view.active.as_ref()?;
-    ScrollArea::vertical()
-        .id_salt("clean-workspace")
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            let width = ui.available_width().min(630.0);
-            let inset = (ui.available_width() - width) * 0.5;
-            ui.add_space((ui.available_height() * 0.09).clamp(8.0, 46.0));
-            ui.horizontal_top(|ui| {
-                ui.add_space(inset);
-                ui.vertical(|ui| {
-                    ui.set_width(width);
-                    ui.heading(l.local("No local changes", "Sem alterações locais"));
-                    ui.colored_label(
-                        p.muted,
-                        l.local(
-                            "Your working tree is clean.",
-                            "A árvore de trabalho está limpa.",
-                        ),
-                    );
-                    ui.add_space(14.0);
-                    let mut clicked = None;
-                    for (title, action) in [
-                        (
-                            l.local(
-                                "Open the repository in your editor",
-                                "Abrir o repositório no editor",
-                            ),
-                            Command::Editor,
-                        ),
-                        (
-                            l.local(
-                                "Browse the repository files",
-                                "Ver os arquivos do repositório",
-                            ),
-                            Command::FileManager,
-                        ),
-                        (
-                            l.local(
-                                "Open the repository in your browser",
-                                "Abrir o repositório no navegador",
-                            ),
-                            Command::Github,
-                        ),
-                    ] {
-                        if action == Command::Github && view.github.workspace_repo.is_none()
-                            || action == Command::Editor && !cfg!(target_os = "linux")
-                        {
-                            continue;
-                        }
-                        c::panel(p.surface, 12)
-                            .corner_radius(egui::CornerRadius::same(5))
-                            .show(ui, |ui| {
-                                ui.set_width((width - 24.0).max(80.0));
-                                let mut button = |ui: &mut Ui| {
-                                    if ui.add(Button::new(action.label(l)).frame(true)).clicked() {
-                                        clicked = Some(action);
-                                    }
-                                };
-                                if width > 445.0 {
-                                    let row_size = egui::vec2(ui.available_width(), 29.0);
-                                    ui.allocate_ui_with_layout(
-                                        row_size,
-                                        egui::Layout::left_to_right(egui::Align::Center),
-                                        |ui| {
-                                            ui.strong(title);
-                                            ui.with_layout(
-                                                egui::Layout::right_to_left(egui::Align::Center),
-                                                button,
-                                            );
-                                        },
-                                    );
-                                } else {
-                                    ui.strong(title);
-                                    button(ui);
-                                }
-                            });
-                        ui.add_space(4.0);
-                    }
-                    match clicked? {
-                        Command::Editor => Some(RepositoryAction::OpenDesktopTool {
-                            tool: DesktopTool::Editor,
-                            path: workspace.path.clone(),
-                        }),
-                        Command::FileManager => {
-                            Some(RepositoryAction::Reveal(workspace.path.clone()))
-                        }
-                        _ => view.github.workspace_repo.as_ref().map(|repo| {
-                            RepositoryAction::Github(gitrust_core::github::Action::Open(
-                                repo.browser(),
-                            ))
-                        }),
-                    }
-                })
-                .inner
-            })
-            .inner
-        })
-        .inner
 }
 
 impl Desktop {

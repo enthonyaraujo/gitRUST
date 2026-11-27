@@ -213,7 +213,7 @@ impl Command {
         l.local(en, pt)
     }
 
-    fn shortcut(self) -> Option<KeyboardShortcut> {
+    pub(super) fn shortcut(self) -> Option<KeyboardShortcut> {
         let (mods, key) = match self {
             NewRepository => (CMD, Key::N),
             Open => (CMD, Key::O),
@@ -442,7 +442,7 @@ impl Desktop {
         }
     }
 
-    fn run_command(&mut self, ui: &mut Ui, events: &mut FrameEvents, command: Command) {
+    pub(super) fn run_command(&mut self, ui: &mut Ui, events: &mut FrameEvents, command: Command) {
         match command {
             Undo | Redo | Cut | CopyText | Paste | SelectAll => self.edit_command(ui, command),
             NewRepository | Open | CloneRepository => {
