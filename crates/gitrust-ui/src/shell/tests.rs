@@ -793,3 +793,65 @@ fn empty_workspace_centers_the_visible_block_across_scales() {
         );
     }
 }
+
+#[test]
+fn empty_workspace_scrolls_to_recents_in_a_short_viewport() {
+    use gitrust_core::workspaces::{Activity, RecentRepositories, RepositoryView};
+
+    let ctx = Context::default();
+    ctx.enable_accesskit();
+    let mut shell = Desktop::new(&ctx, UiOptions::default());
+    shell.enable_repository_management();
+    shell.set_repository_view(RepositoryView {
+        git_available: true,
+        activity: Activity::Idle,
+        recent: RecentRepositories {
+            paths: vec!["/fixture/Workspace".into()],
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    // This logical size represents a 680 x 420 window at 200% scale.
+    let screen_rect = Some(Rect::from_min_size(Pos2::ZERO, vec2(340.0, 210.0)));
+    let mut last_remove = None;
+    for (time, events) in [
+        (0.0, vec![Event::PointerMoved(Pos2::new(200.0, 170.0))]),
+        (
+            0.1,
+            vec![Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: vec2(0.0, -360.0),
+                phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Unknown,
+                modifiers: Modifiers::NONE,
+            }],
+        ),
+        (0.2, Vec::new()),
+        (0.3, Vec::new()),
+        (0.4, Vec::new()),
+    ] {
+        let output = render(
+            &ctx,
+            &mut shell,
+            RawInput {
+                screen_rect,
+                time: Some(time),
+                events,
+                ..Default::default()
+            },
+        );
+        if let Some(update) = output.platform_output.accesskit_update
+            && let Some((_, node)) = update
+                .nodes
+                .iter()
+                .find(|(_, n)| n.label() == Some("Remove"))
+        {
+            last_remove = node.bounds();
+        }
+    }
+    let remove = last_remove.expect("recent workspace action");
+    assert!(
+        remove.y0 > 84.0 && remove.y1 <= 210.0,
+        "recent action did not scroll into the viewport: {remove:?}"
+    );
+}
