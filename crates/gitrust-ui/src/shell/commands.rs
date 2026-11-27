@@ -531,18 +531,17 @@ impl Desktop {
             Shortcuts => self.dialog = Dialog::Shortcuts,
             Logs => events.show_logs = true,
             About => self.dialog = Dialog::About,
-            _ => self.run_repository_command(command),
+            _ => self.run_repository_command(ui.ctx(), command),
         }
     }
 
-    fn run_repository_command(&mut self, command: Command) {
+    fn run_repository_command(&mut self, ctx: &egui::Context, command: Command) {
         if let Some(managed) = &mut self.managed {
             let github = &managed.view.github;
             match command {
                 Fetch => {
-                    if let Some(intent) = managed.fetch_intent() {
+                    if managed.start_fetch(ctx) {
                         self.screen = Screen::Workspace;
-                        managed.send(RepositoryAction::Remote(intent));
                     }
                 }
                 Push | Pull => {

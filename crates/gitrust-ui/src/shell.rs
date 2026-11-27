@@ -1,6 +1,7 @@
 mod changes;
 mod commands;
 mod dialogs;
+mod fetch;
 mod github;
 mod navigation;
 mod remotes;
@@ -15,7 +16,7 @@ pub(crate) use dialogs::preferences;
 use egui::{
     Button, CentralPanel, Id, Key, Label, Modifiers, RichText, ScrollArea, ThemePreference, Ui,
 };
-use gitrust_core::{AppEvent, AppState, workspaces::RepositoryAction};
+use gitrust_core::{AppEvent, AppState};
 
 use crate::components::{self as c, Icon, ListSelection, Row};
 use crate::demo::{BRANCHES, COMMITS, FILES, Fixtures};
@@ -333,6 +334,9 @@ impl Desktop {
         let p = Palette::for_theme(ui.ctx().theme());
         let l = self.options.language;
         let compact = rect.width() < size::COMPACT;
+        if let Some(managed) = &mut self.managed {
+            managed.settle_fetch(ui.ctx());
+        }
         self.accelerators(ui, &mut events);
         if self.dialog == Dialog::None && ui.memory(|memory| memory.top_modal_layer().is_none()) {
             if let Some(tab) = tab_shortcut(ui) {

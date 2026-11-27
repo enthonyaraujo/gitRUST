@@ -144,6 +144,7 @@ pub(super) fn single_pane(ui: &Ui) -> bool {
 pub(super) struct ManagerUi {
     pub(super) view: RepositoryView,
     pub(super) sidebar_width: Option<f32>,
+    pub(super) fetch: super::fetch::FetchState,
     query: String,
     changes: super::changes::ChangesUi,
     pub(super) navigation: super::navigation::NavigationUi,
@@ -291,7 +292,7 @@ impl ManagerUi {
         }
     }
 
-    fn fetch_target(&self) -> Option<&Remote> {
+    pub(super) fn fetch_target(&self) -> Option<&Remote> {
         let view = self.view.remotes.as_ref()?;
         view.entries
             .iter()
@@ -300,7 +301,8 @@ impl ManagerUi {
     }
 
     pub(super) fn can_fetch(&self) -> bool {
-        self.idle()
+        !matches!(self.fetch, super::fetch::FetchState::Fetching { .. })
+            && self.idle()
             && self.view.active.is_some()
             && !self.view.github.busy
             && self
@@ -336,50 +338,15 @@ impl ManagerUi {
         })
     }
 
-    pub(super) fn toolbar_remote(
-        &self,
-        ctx: &egui::Context,
-        l: Language,
-    ) -> (Option<Command>, String, String) {
-        let Some(view) = &self.view.remotes else {
-            return (
-                None,
-                l.text(Text::Remote).into(),
-                l.local("Loading…", "Carregando…").into(),
-            );
-        };
-        let Some(remote) = self.fetch_target() else {
-            let enabled = self.view.github.workspace.is_some()
-                && !self.view.github.busy
-                && self
-                    .view
-                    .active
-                    .as_ref()
-                    .is_some_and(|active| active.changes.is_some());
-            return (
-                enabled.then_some(Command::Github),
-                l.local("Publish repository", "Publicar repositório").into(),
-                "GitHub".into(),
-            );
-        };
-        let detail = if view.busy || self.view.github.busy {
-            l.local("Working…", "Processando…").into()
-        } else if remote.fetch.is_none() {
-            l.local("Fetch unavailable", "Busca indisponível").into()
-        } else if let Some((_, time)) = view
-            .last_fetch
-            .iter()
-            .find(|(name, _)| name == &remote.name)
-        {
-            super::remotes::last_fetch_text(ctx, *time, l)
-        } else {
-            l.local("Ready to fetch", "Pronto para buscar").into()
-        };
-        (
-            self.can_fetch().then_some(Command::Fetch),
-            format!("{} {}", l.text(Text::Fetch), remote.name),
-            detail,
-        )
+    pub(super) fn can_publish(&self) -> bool {
+        self.view.remotes.is_some()
+            && self.view.github.workspace.is_some()
+            && !self.view.github.busy
+            && self
+                .view
+                .active
+                .as_ref()
+                .is_some_and(|active| active.changes.is_some())
     }
 
     pub(super) fn focus(&mut self, action: Command) {
@@ -1093,6 +1060,15 @@ impl Desktop {
                 != view.navigation.as_ref().map(|nav| nav.identity)
             {
                 managed.navigation = super::navigation::NavigationUi::default();
+            }
+            if managed
+                .view
+                .active
+                .as_ref()
+                .map(|workspace| &workspace.path)
+                != view.active.as_ref().map(|workspace| &workspace.path)
+            {
+                managed.fetch = super::fetch::FetchState::Idle;
             }
             managed.view = view;
         }

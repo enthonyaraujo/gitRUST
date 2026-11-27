@@ -46,6 +46,7 @@ pub(crate) enum Icon {
     Branch,
     Remote,
     Sync,
+    SyncRotating(f32),
     Chevron,
     Settings,
     Search,
@@ -119,7 +120,8 @@ impl Icon {
                 line(0.25, 0.40, 0.50, 0.64);
                 line(0.50, 0.64, 0.75, 0.40);
             }
-            Self::Sync => Self::paint_sync(pen, r, stroke),
+            Self::Sync => Self::paint_sync(pen, r, stroke, 0.0),
+            Self::SyncRotating(angle) => Self::paint_sync(pen, r, stroke, angle),
             Self::Remote => {
                 line(0.18, 0.35, 0.82, 0.35);
                 line(0.63, 0.16, 0.82, 0.35);
@@ -156,10 +158,11 @@ impl Icon {
         }
     }
 
-    fn paint_sync(pen: &egui::Painter, rect: Rect, stroke: Stroke) {
-        let at = |x, y| rect.min + vec2(x, y) * rect.width();
+    fn paint_sync(pen: &egui::Painter, rect: Rect, stroke: Stroke, angle: f32) {
+        let rotation = egui::emath::Rot2::from_angle(angle);
+        let at = |x, y| rect.center() + rotation * vec2(x, y) * rect.width();
         for sign in [1.0_f32, -1.0] {
-            let point = |x, y| at(0.5 + sign * x, 0.5 + sign * y);
+            let point = |x, y| at(sign * x, sign * y);
             pen.add(egui::Shape::line(
                 vec![
                     point(-0.38, -0.08),
@@ -471,6 +474,7 @@ pub(crate) fn context_button(
         },
     );
     let painter = ui.painter_at(rect);
+    let fetching = matches!(icon, Icon::SyncRotating(_));
     if response.hovered() && interactive {
         painter.rect_filled(rect, size::RADIUS, p.hover);
     }
@@ -493,7 +497,7 @@ pub(crate) fn context_button(
         icon.paint(
             &painter,
             Rect::from_min_size(origin, Vec2::splat(size::ICON)),
-            p.muted,
+            if fetching { p.disabled } else { p.muted },
         );
     }
     let dropdown = interactive && matches!(icon, Icon::Folder | Icon::Lock | Icon::Branch);
@@ -510,7 +514,7 @@ pub(crate) fn context_button(
     } else {
         rect.right() - 6.0
     };
-    let remote = matches!(icon, Icon::Sync);
+    let remote = matches!(icon, Icon::Sync | Icon::SyncRotating(_));
     for (text, strong, y) in [(label, remote, 8.0), (value, !remote, 25.0)] {
         let (color, font) = if strong {
             (
@@ -518,7 +522,10 @@ pub(crate) fn context_button(
                 FontId::new(14.0, weight()),
             )
         } else {
-            (p.muted, FontId::proportional(11.5))
+            (
+                if fetching { p.disabled } else { p.muted },
+                FontId::proportional(11.5),
+            )
         };
         let mut job =
             egui::text::LayoutJob::simple(text.to_owned(), font, color, (right - left).max(10.0));
@@ -528,7 +535,11 @@ pub(crate) fn context_button(
     response.widget_info(|| {
         WidgetInfo::labeled(Role::Button, interactive, format!("{label}, {value}"))
     });
-    response.on_hover_text(format!("{label} · {value}"))
+    if fetching {
+        response
+    } else {
+        response.on_hover_text(format!("{label} · {value}"))
+    }
 }
 
 pub(crate) fn adjust_panel(ui: &Ui, name: &'static str, delta: f32) {

@@ -1,8 +1,8 @@
 use crate::demo::REPOSITORY;
 
 use super::{
-    BRANCHES, Desktop, DiagnosticView, Icon, Id, Language, Palette, RepositoryAction, Screen, Text,
-    Ui, anchored_popup, c, commands, remotes,
+    BRANCHES, Desktop, DiagnosticView, Icon, Id, Language, Palette, Screen, Text, Ui,
+    anchored_popup, c, commands, remotes,
 };
 
 impl Desktop {
@@ -97,31 +97,32 @@ impl Desktop {
             self.repository_button(ui, p, l, initial_popup, repo_width);
             self.branch_button(ui, p, l, block_width, active, initial_popup);
             if let Some(managed) = self.managed.as_mut().filter(|_| active) {
-                use commands::Command;
-                let (action, label, detail) = managed.toolbar_remote(ui.ctx(), l);
-                let response = c::context_button(
-                    ui,
-                    block_width,
-                    Icon::Sync,
-                    &label,
-                    &detail,
-                    action.is_some(),
-                    p,
-                );
-                if response.clicked() {
-                    match action {
-                        Some(Command::Fetch) => {
-                            if let Some(intent) = managed.fetch_intent() {
-                                managed.send(RepositoryAction::Remote(intent));
-                            }
-                        }
-                        Some(Command::Github) => {
+                let response = managed
+                    .fetch_button(ui, block_width, l, p)
+                    .unwrap_or_else(|| {
+                        let (label, detail) = if managed.view.remotes.is_some() {
+                            (
+                                l.local("Publish repository", "Publicar repositório"),
+                                "GitHub",
+                            )
+                        } else {
+                            (l.text(Text::Remote), l.local("Loading…", "Carregando…"))
+                        };
+                        let response = c::context_button(
+                            ui,
+                            block_width,
+                            Icon::Sync,
+                            label,
+                            detail,
+                            managed.can_publish(),
+                            p,
+                        );
+                        if response.clicked() {
                             self.screen = Screen::Github;
                             managed.github.publish_workspace(&managed.view.github);
                         }
-                        _ => {}
-                    }
-                }
+                        response
+                    });
                 // Only the repository settings command opens this menu. A primary click fetches.
                 egui::Popup::menu(&response)
                     .id(Id::unique(remotes::REMOTE_POPUP))

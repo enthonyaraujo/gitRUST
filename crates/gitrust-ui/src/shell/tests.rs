@@ -3,6 +3,7 @@ use std::time::Duration;
 use egui::{Context, Event, Pos2, RawInput, Rect, Theme, ViewportId, vec2};
 
 use super::*;
+use gitrust_core::workspaces::RepositoryAction;
 
 fn state() -> AppState {
     AppState::new(
@@ -548,10 +549,11 @@ fn desktop_accelerators_distinguish_shift_and_respect_zoom_limits() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // Exercise the whole fetch lifecycle on one workspace.
 fn toolbar_and_keyboard_fetch_origin_without_opening_configuration() {
     use gitrust_core::{
         github::{AccountId, AuthMethod, RepositoryKey},
-        remotes::{Credential, Remote, RemoteAction, RemotesView},
+        remotes::{Credential, Remote, RemoteAction, RemoteNotice, RemotesView},
         workspaces::{Activity, ChangeCounts, Checkout, RepositoryView, Workspace},
     };
 
@@ -590,7 +592,14 @@ fn toolbar_and_keyboard_fetch_origin_without_opening_configuration() {
         ..Default::default()
     };
     shell.set_repository_view(view.clone());
-    let time = press_fetch_toolbar(&ctx, &mut shell);
+    assert_fetch_label(
+        &ctx,
+        &mut shell,
+        0.0,
+        "Fetch origin, Last fetch: never",
+        false,
+    );
+    let (time, target) = press_fetch_toolbar(&ctx, &mut shell);
     let Some(RepositoryAction::Remote(intent)) = shell.take_repository_action() else {
         panic!("click should submit a remote operation directly");
     };
@@ -600,18 +609,51 @@ fn toolbar_and_keyboard_fetch_origin_without_opening_configuration() {
         RemoteAction::Fetch(names, auth) if names == ["origin"] && matches!(auth.credential, Credential::Anonymous)
     ));
 
+    assert_fetch_label(
+        &ctx,
+        &mut shell,
+        time + 0.1,
+        "Fetching origin, Hang on…",
+        true,
+    );
+    click_fetch_target(&ctx, &mut shell, target, time + 0.11, 0.01);
+    assert!(shell.take_repository_action().is_none());
+
+    let last_fetch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("valid clock")
+        .as_secs();
+    let remotes = view.remotes.as_mut().expect("remote snapshot");
+    remotes.last_fetch = [("origin".into(), last_fetch)].into();
+    remotes.notice = Some(RemoteNotice::Fetched);
+    shell.set_repository_view(view.clone());
+    assert_fetch_label(
+        &ctx,
+        &mut shell,
+        time + 0.2,
+        "Fetching origin, Hang on…",
+        true,
+    );
+    assert_fetch_label(
+        &ctx,
+        &mut shell,
+        time + 0.6,
+        "Fetch origin, Last fetch: just now",
+        false,
+    );
+
     view.github.workspace_account = Some(AccountId {
         method: AuthMethod::Browser,
         number: 1,
     });
     view.github.workspace_repo = RepositoryKey::new("fixture", "example");
-    shell.set_repository_view(view);
+    shell.set_repository_view(view.clone());
     let _ = render(
         &ctx,
         &mut shell,
         RawInput {
             events: vec![key(Key::T, Modifiers::COMMAND.plus(Modifiers::SHIFT))],
-            ..input(time)
+            ..input(time + 0.7)
         },
     );
     let Some(RepositoryAction::Remote(intent)) = shell.take_repository_action() else {
@@ -621,11 +663,54 @@ fn toolbar_and_keyboard_fetch_origin_without_opening_configuration() {
         intent.action,
         RemoteAction::Fetch(names, auth) if names == ["origin"] && matches!(auth.credential, Credential::LinkedAccount)
     ));
+    let remotes = view.remotes.as_mut().expect("remote snapshot");
+    remotes.busy = true;
+    remotes.notice = None;
+    shell.set_repository_view(view.clone());
+    assert_fetch_label(
+        &ctx,
+        &mut shell,
+        time + 2.0,
+        "Fetching origin, Hang on…",
+        true,
+    );
+    let remotes = view.remotes.as_mut().expect("remote snapshot");
+    remotes.busy = false;
+    remotes.notice = Some(RemoteNotice::Offline);
+    shell.set_repository_view(view);
+    assert_fetch_label(
+        &ctx,
+        &mut shell,
+        time + 2.1,
+        "Fetch origin, Last fetch: just now",
+        false,
+    );
+    assert!(matches!(
+        shell.managed.as_ref().expect("manager").fetch,
+        fetch::FetchState::Error
+    ));
 }
 
-fn press_fetch_toolbar(ctx: &Context, shell: &mut Desktop) -> f64 {
+fn assert_fetch_label(ctx: &Context, shell: &mut Desktop, time: f64, label: &str, disabled: bool) {
+    // AccessKit updates are incremental. Reset the tree to inspect the complete widget state.
+    ctx.disable_accesskit();
+    ctx.enable_accesskit();
+    let output = render(ctx, shell, input(time));
+    let update = output
+        .platform_output
+        .accesskit_update
+        .expect("accessibility tree");
+    let (_, button) = update
+        .nodes
+        .iter()
+        .find(|(_, node)| node.label() == Some(label))
+        .expect(label);
+    assert_eq!(button.is_disabled(), disabled);
+}
+
+fn press_fetch_toolbar(ctx: &Context, shell: &mut Desktop) -> (f64, Pos2) {
     let mut target = None;
-    let mut time = 0.0;
+    let mut time = 0.05;
     for _ in 0..4 {
         let update = render(ctx, shell, input(time))
             .platform_output
@@ -649,6 +734,16 @@ fn press_fetch_toolbar(ctx: &Context, shell: &mut Desktop) -> f64 {
         f64::midpoint(bounds.x0, bounds.x1) as f32,
         f64::midpoint(bounds.y0, bounds.y1) as f32,
     );
+    (click_fetch_target(ctx, shell, pos, time, 0.1), pos)
+}
+
+fn click_fetch_target(
+    ctx: &Context,
+    shell: &mut Desktop,
+    pos: Pos2,
+    mut time: f64,
+    step: f64,
+) -> f64 {
     for pressed in [true, false] {
         let _ = render(
             ctx,
@@ -666,7 +761,7 @@ fn press_fetch_toolbar(ctx: &Context, shell: &mut Desktop) -> f64 {
                 ..input(time)
             },
         );
-        time += 0.1;
+        time += step;
     }
     time
 }

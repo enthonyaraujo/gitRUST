@@ -819,27 +819,21 @@ pub(super) fn last_fetch_text(ctx: &egui::Context, seconds: u64, l: Language) ->
         .unwrap_or_default()
         .as_secs()
         .saturating_sub(seconds);
-    let (unit, suffix) = match age {
-        0..60 => (60, l.local("just now", "agora mesmo").to_owned()),
-        60..3600 => (60, format!("{} min", age / 60)),
-        3600..86400 => (3600, format!("{} h", age / 3600)),
-        _ => {
-            return format!(
-                "{} {} UTC",
-                l.local("Last fetch:", "Última busca:"),
-                utc(seconds)
-            );
-        }
+    ctx.request_repaint_after(Duration::from_secs(30));
+    let suffix = match age {
+        0..60 => l.local("just now", "agora mesmo").to_owned(),
+        60..120 => l.local("1 minute ago", "há 1 minuto").to_owned(),
+        120..3600 => match l {
+            Language::English => format!("{} minutes ago", age / 60),
+            Language::Portuguese => format!("há {} minutos", age / 60),
+        },
+        3600..86400 => match l {
+            Language::English => format!("{} h ago", age / 3600),
+            Language::Portuguese => format!("há {} h", age / 3600),
+        },
+        _ => format!("{} UTC", utc(seconds)),
     };
-    ctx.request_repaint_after(Duration::from_secs(unit - age % unit));
-    if age < 60 {
-        format!("{} {suffix}", l.local("Last fetch:", "Última busca:"))
-    } else {
-        match l {
-            Language::English => format!("Last fetch: {suffix} ago"),
-            Language::Portuguese => format!("Última busca: há {suffix}"),
-        }
-    }
+    format!("{} {suffix}", l.local("Last fetch:", "Última busca:"))
 }
 
 fn utc(seconds: u64) -> String {
