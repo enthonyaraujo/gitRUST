@@ -950,3 +950,102 @@ fn empty_workspace_scrolls_to_recents_in_a_short_viewport() {
         "recent action did not scroll into the viewport: {remove:?}"
     );
 }
+
+#[test]
+fn right_click_on_branch_opens_actions_without_switching() {
+    use gitrust_core::{
+        navigation::{NavigationView, Reference},
+        workspaces::{Activity, ChangeCounts, Checkout, RepositoryView, Workspace},
+    };
+
+    let ctx = Context::default();
+    let mut shell = Desktop::new(&ctx, UiOptions::default());
+    shell.enable_repository_management();
+    shell.set_repository_view(RepositoryView {
+        git_available: true,
+        activity: Activity::Idle,
+        active: Some(Workspace {
+            path: "/fixture".into(),
+            checkout: Checkout::Branch("main".into()),
+            has_remote: false,
+            changes: Some(ChangeCounts::default()),
+        }),
+        navigation: Some(NavigationView {
+            refs: [Reference {
+                name: (&b"refs/heads/topic"[..]).into(),
+                label: "topic".into(),
+                commit: "1".repeat(40),
+                upstream: None,
+                divergence: None,
+                remote: false,
+                current: false,
+                occupied: false,
+            }]
+            .into(),
+            ..Default::default()
+        }),
+        ..Default::default()
+    });
+    shell.open_popup = Some(commands::BRANCH_POPUP);
+    let _ = render(&ctx, &mut shell, input(0.0));
+    let target = |shell: &mut Desktop, time, label: &str| {
+        ctx.disable_accesskit();
+        ctx.enable_accesskit();
+        let tree = render(&ctx, shell, input(time))
+            .platform_output
+            .accesskit_update
+            .expect("accessibility tree");
+        let bounds = tree
+            .nodes
+            .iter()
+            .find_map(|(_, node)| {
+                (node.label() == Some(label))
+                    .then(|| node.bounds())
+                    .flatten()
+            })
+            .expect(label);
+        #[allow(clippy::cast_possible_truncation)]
+        Pos2::new(
+            f64::midpoint(bounds.x0, bounds.x1) as f32,
+            f64::midpoint(bounds.y0, bounds.y1) as f32,
+        )
+    };
+    let click = |shell: &mut Desktop, pos, button, time| {
+        let _ = render(
+            &ctx,
+            shell,
+            RawInput {
+                events: vec![Event::PointerMoved(pos)],
+                ..input(time)
+            },
+        );
+        for (pressed, offset) in [(true, 0.01), (false, 0.02)] {
+            let output = render(
+                &ctx,
+                shell,
+                RawInput {
+                    events: vec![Event::PointerButton {
+                        pos,
+                        pressed,
+                        button,
+                        modifiers: Modifiers::NONE,
+                    }],
+                    ..input(time + offset)
+                },
+            );
+            if !pressed {
+                return output.platform_output.commands;
+            }
+        }
+        unreachable!()
+    };
+    let row = target(&mut shell, 0.1, "topic");
+    let _ = click(&mut shell, row, egui::PointerButton::Secondary, 0.2);
+    assert!(shell.take_repository_action().is_none());
+    let _ = target(&mut shell, 0.3, "Rename…");
+    let _ = target(&mut shell, 0.4, "Delete…");
+    let copy = target(&mut shell, 0.5, "Copy branch name");
+    let commands = click(&mut shell, copy, egui::PointerButton::Primary, 0.6);
+    assert!(commands.contains(&egui::OutputCommand::CopyText("topic".into())));
+    assert!(shell.take_repository_action().is_none());
+}

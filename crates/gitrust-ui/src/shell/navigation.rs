@@ -64,12 +64,12 @@ pub(super) struct NavigationUi {
     pub tab: Tab,
     pane: Pane,
     branch_query: String,
+    branch_context: Option<(egui::Id, egui::Pos2)>,
     choose_query: String,
     compare_waiting: bool,
     stash_waiting: bool,
     search: history::Search,
     show_details: bool,
-    branch: Option<Arc<[u8]>>,
     form: Option<(u64, Form)>,
     input: String,
     body: String,
@@ -185,51 +185,30 @@ impl NavigationUi {
             }
         });
         ui.separator();
-        self.branch_rows(ui, view, l, p);
+        let command = self.branch_rows(ui, view, enabled, l, p);
         ui.separator();
-        let entry = view
-            .refs
-            .iter()
-            .find(|item| self.branch.as_ref() == Some(&item.name))
-            .or_else(|| view.refs.iter().find(|item| item.current));
-        if let Some(entry) = entry
-            && let Some(upstream) = &entry.upstream
+        if enabled
+            && Self::menu_available(Some(view), MenuCommand::Merge)
+            && ui
+                .button(l.local("Choose a branch to merge…", "Escolher branch para merge…"))
+                .clicked()
         {
-            ui.label(format!("Upstream · {upstream}"));
-            if let Some((ahead, behind)) = entry.divergence {
-                ui.label(format!("↑ {ahead}    ↓ {behind}"));
-            }
+            self.open_menu(view, MenuCommand::Merge);
+            ui.close();
         }
-        let mut command = None;
-        ui.add_enabled_ui(enabled, |ui| {
-            if let Some(entry) = entry {
-                ui.horizontal_wrapped(|ui| {
-                    if ui
-                        .button(l.local("Create from selected", "Criar a partir da seleção"))
-                        .clicked()
-                    {
-                        self.open(view, Form::Create(BranchBase::Ref(entry.clone())));
-                        ui.close();
-                    }
-                    if !entry.remote {
-                        command = self.local_actions(ui, view, entry, l);
-                    }
-                });
-            }
-            if Self::menu_available(Some(view), MenuCommand::Merge)
-                && ui
-                    .button(l.local("Choose a branch to merge…", "Escolher branch para merge…"))
-                    .clicked()
-            {
-                self.open_menu(view, MenuCommand::Merge);
-                ui.close();
-            }
-        });
         command
     }
 
-    fn branch_rows(&mut self, ui: &mut Ui, view: &NavigationView, l: Language, p: Palette) {
+    fn branch_rows(
+        &mut self,
+        ui: &mut Ui,
+        view: &NavigationView,
+        enabled: bool,
+        l: Language,
+        p: Palette,
+    ) -> Option<NavigationIntent> {
         let query = self.branch_query.trim().to_lowercase();
+        let mut switch = None;
         ScrollArea::vertical()
             .max_height((ui.ctx().content_rect().height() * 0.42).clamp(56.0, 340.0))
             .show(ui, |ui| {
@@ -253,14 +232,47 @@ impl NavigationUi {
                         if index == 0 {
                             ui.strong(label);
                         }
-                        let selected = self
-                            .branch
-                            .as_ref()
-                            .map_or(entry.current, |name| name == &entry.name);
                         let response =
-                            c::branch_choice(ui, &entry.label, entry.current, selected, p);
-                        if response.clicked() {
-                            self.branch = Some(entry.name.clone());
+                            c::branch_choice(ui, &entry.label, entry.current, entry.current, p);
+                        if let Some(upstream) = &entry.upstream {
+                            let tracking = entry.divergence.map_or_else(
+                                || upstream.clone(),
+                                |(ahead, behind)| format!("{upstream} · ↑ {ahead} ↓ {behind}"),
+                            );
+                            response.clone().on_hover_text(tracking);
+                        }
+                        if response.secondary_clicked() {
+                            self.branch_context = response
+                                .interact_pointer_pos()
+                                .map(|pos| (response.id, pos));
+                        }
+                        let mut context_open =
+                            self.branch_context.is_some_and(|(id, _)| id == response.id);
+                        let menu = egui::Popup::menu(&response)
+                            .anchor(
+                                self.branch_context
+                                    .map_or(response.rect.center(), |(_, pos)| pos),
+                            )
+                            .open_bool(&mut context_open)
+                            .show(|ui| {
+                                self.branch_context_actions(ui, view, entry, enabled, l);
+                            });
+                        if !context_open
+                            && self.branch_context.is_some_and(|(id, _)| id == response.id)
+                        {
+                            self.branch_context = None;
+                        }
+                        if menu.is_some() {
+                            continue;
+                        }
+                        if response.clicked() && enabled {
+                            if entry.remote {
+                                self.open(view, Form::Create(BranchBase::Ref(entry.clone())));
+                                ui.close();
+                            } else if !entry.current && !entry.occupied {
+                                switch = Some(intent(view, Command::Switch(entry.clone())));
+                                ui.close();
+                            }
                         }
                     }
                 }
@@ -268,57 +280,56 @@ impl NavigationUi {
                     ui.label(l.local("No matching branches", "Nenhuma branch encontrada"));
                 }
             });
+        switch
     }
 
-    fn local_actions(
+    fn branch_context_actions(
         &mut self,
         ui: &mut Ui,
         view: &NavigationView,
-        reference: &Reference,
+        entry: &Reference,
+        enabled: bool,
         l: Language,
-    ) -> Option<NavigationIntent> {
-        let available = !reference.occupied || reference.current;
-        if ui
-            .add_enabled(
-                !reference.current && available,
-                Button::new(l.local("Switch branch", "Alternar branch")),
-            )
-            .clicked()
+    ) {
+        if !entry.remote
+            && ui
+                .add_enabled(
+                    enabled && (!entry.occupied || entry.current),
+                    Button::new(l.local("Rename…", "Renomear…")),
+                )
+                .clicked()
         {
-            ui.close();
-            return Some(intent(view, Command::Switch(reference.clone())));
-        }
-        if ui
-            .add_enabled(
-                available,
-                Button::new(l.local("Rename branch", "Renomear branch")),
-            )
-            .clicked()
-        {
-            self.open(view, Form::Rename(reference.clone()));
+            self.open(view, Form::Rename(entry.clone()));
             ui.close();
         }
         if ui
-            .add_enabled(
-                !reference.occupied && !reference.current,
-                Button::new(l.local("Delete branch", "Excluir branch")),
-            )
+            .button(l.local("Copy branch name", "Copiar nome da branch"))
             .clicked()
         {
-            self.open(view, Form::Delete(reference.clone()));
+            ui.ctx().copy_text(entry.label.clone());
+            ui.close();
+        }
+        if !entry.remote
+            && ui
+                .add_enabled(
+                    enabled && !entry.occupied && !entry.current,
+                    Button::new(l.local("Delete…", "Excluir…")),
+                )
+                .clicked()
+        {
+            self.open(view, Form::Delete(entry.clone()));
             ui.close();
         }
         if ui
             .add_enabled(
-                !reference.current && view.refs.iter().any(|branch| branch.current),
-                Button::new(l.local("Merge into current branch", "Integrar na branch atual")),
+                enabled,
+                Button::new(l.local("Create branch from here…", "Criar branch a partir daqui…")),
             )
             .clicked()
         {
-            self.open(view, Form::Merge(reference.clone()));
+            self.open(view, Form::Create(BranchBase::Ref(entry.clone())));
             ui.close();
         }
-        None
     }
 
     pub(super) fn status(&mut self, ui: &mut Ui, view: &NavigationView, l: Language, p: Palette) {

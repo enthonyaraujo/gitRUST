@@ -410,10 +410,13 @@ impl ManagerUi {
 
     pub(super) fn branch_popup(&mut self, ui: &mut Ui, l: Language, p: Palette) -> bool {
         if let Some(view) = self.view.navigation.as_ref() {
-            if let Some(action) =
-                self.navigation
-                    .branch_picker(ui, view, self.view.changes.is_some(), l, p)
-            {
+            if let Some(action) = self.navigation.branch_picker(
+                ui,
+                view,
+                self.view.changes.is_some() && self.idle(),
+                l,
+                p,
+            ) {
                 self.action = Some(RepositoryAction::Navigate(action));
             }
         } else {
