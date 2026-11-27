@@ -43,6 +43,14 @@ impl Coordinator {
                 self.view.github.client_id = device;
                 self.view.github.browser_client_id = browser;
                 self.github.bindings = bindings;
+                if !self.view.github.client_id.is_empty()
+                    || !self.view.github.browser_client_id.is_empty()
+                {
+                    self.submit_github(Job::Action(Action::Restore {
+                        device: self.view.github.client_id.clone(),
+                        browser: self.view.github.browser_client_id.clone(),
+                    }));
+                }
             } else {
                 self.github.profile_read_failed = true;
                 self.view.github.notice = Some(Notice::StorageUnavailable);
