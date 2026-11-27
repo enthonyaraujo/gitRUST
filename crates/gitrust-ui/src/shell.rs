@@ -15,7 +15,7 @@ use egui::{
     Align, Button, CentralPanel, Id, Key, Label, Layout, Modifiers, RichText, ScrollArea,
     ThemePreference, Ui,
 };
-use gitrust_core::{AppEvent, AppState};
+use gitrust_core::{AppEvent, AppState, workspaces::RepositoryAction};
 
 use crate::components::{self as c, Icon, ListSelection, Row};
 use crate::demo::{BRANCHES, COMMITS, FILES, Fixtures, REPOSITORY};
@@ -510,11 +510,9 @@ impl Desktop {
                 );
                 if response.clicked() {
                     match action {
-                        Some(action @ (Command::Fetch | Command::Push | Command::Pull)) => {
-                            if let (Some(view), Some(dialog)) =
-                                (&managed.view.remotes, managed.remote_dialog(action))
-                            {
-                                managed.remotes.open(view, dialog);
+                        Some(Command::Fetch) => {
+                            if let Some(intent) = managed.fetch_intent() {
+                                managed.send(RepositoryAction::Remote(intent));
                             }
                         }
                         Some(Command::Github) => {

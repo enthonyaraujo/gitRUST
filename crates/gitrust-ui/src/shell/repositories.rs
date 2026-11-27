@@ -1,6 +1,8 @@
 use std::path::{Component, Path, PathBuf};
 
 use egui::{Button, Id, RichText, ScrollArea, ThemePreference, Ui};
+use gitrust_core::github::RepositoryKey;
+use gitrust_core::remotes::{Auth, Credential, Remote, RemoteAction, RemoteIntent};
 use gitrust_core::workspaces::{
     Activity, Appearance, Checkout, DesktopTool, Locale, Preferences, ProvisionKind,
     RepositoryAction, RepositoryView, TransferPhase, WorkspaceIssue,
@@ -286,9 +288,6 @@ impl ManagerUi {
             .as_ref()
             .is_some_and(|(name, _)| name == &remote.name);
         match action {
-            Command::Fetch if remote.fetch.is_some() => {
-                Some(RemoteDialog::Fetch(vec![remote.clone()]))
-            }
             Command::Pull
                 if active.changes.is_some()
                     && !view.rebase.in_progress()
@@ -312,12 +311,57 @@ impl ManagerUi {
     pub(super) fn toolbar_remote(&self, l: Language) -> (Option<Command>, String, String) {
         let Some(view) = &self.view.remotes else {
             return (
+    fn fetch_target(&self) -> Option<&Remote> {
+        let view = self.view.remotes.as_ref()?;
+        view.entries
+            .iter()
+            .find(|remote| remote.name == "origin")
+            .or_else(|| self.remotes.selected(view))
+    }
+
+    pub(super) fn can_fetch(&self) -> bool {
+        self.idle()
+            && self.view.active.is_some()
+            && !self.view.github.busy
+            && self
+                .fetch_target()
+                .is_some_and(|remote| remote.fetch.is_some())
+    }
+
+    pub(super) fn fetch_intent(&self) -> Option<RemoteIntent> {
+        if !self.can_fetch() {
+            return None;
+        }
+        let view = self.view.remotes.as_ref()?;
+        let remote = self.fetch_target()?;
+        let endpoint = remote.fetch.as_deref()?;
+        let github = &self.view.github;
+        let linked = github.workspace_account.is_some()
+            && RepositoryKey::from_https(endpoint)
+                .as_ref()
+                .is_some_and(|repo| Some(repo) == github.workspace_repo.as_ref());
+        Some(RemoteIntent {
+            version: view.version,
+            action: RemoteAction::Fetch(
+                vec![remote.name.clone()],
+                Auth {
+                    credential: if linked {
+                        Credential::LinkedAccount
+                    } else {
+                        Credential::Anonymous
+                    },
+                    ..Auth::default()
+                },
+            ),
+        })
+    }
+
                 None,
                 l.text(Text::Remote).into(),
                 l.local("Loading…", "Carregando…").into(),
             );
         };
-        let Some(remote) = self.remotes.selected(view) else {
+        let Some(remote) = self.fetch_target() else {
             let enabled = self.view.github.workspace.is_some()
                 && !self.view.github.busy
                 && self
@@ -331,28 +375,10 @@ impl ManagerUi {
                 "GitHub".into(),
             );
         };
-        let tracked = view
-            .upstream
-            .as_ref()
-            .is_some_and(|(name, _)| name == &remote.name);
-        let (ahead, behind) = if tracked {
-            view.ahead_behind.unwrap_or_default()
-        } else {
-            (0, 0)
-        };
-        let (command, title) = if behind != 0 && self.remote_dialog(Command::Pull).is_some() {
-            (Command::Pull, l.text(Text::Pull))
-        } else if ahead != 0 && self.remote_dialog(Command::Push).is_some() {
-            (Command::Push, l.text(Text::Push))
-        } else if !tracked && self.remote_dialog(Command::Push).is_some() {
-            (Command::Push, l.local("Publish branch", "Publicar branch"))
-        } else {
-            (Command::Fetch, l.text(Text::Fetch))
-        };
-        let detail = if view.busy {
+        let detail = if view.busy || self.view.github.busy {
             l.local("Working…", "Processando…").into()
-        } else if ahead != 0 || behind != 0 {
-            format!("↑ {ahead}  ↓ {behind}")
+        } else if remote.fetch.is_none() {
+            l.local("Fetch unavailable", "Busca indisponível").into()
         } else if let Some((_, time)) = view
             .last_fetch
             .iter()
@@ -360,11 +386,11 @@ impl ManagerUi {
         {
             super::remotes::last_fetch_text(*time, l)
         } else {
-            l.local("Remote", "Remoto").into()
+            l.local("Ready to fetch", "Pronto para buscar").into()
         };
         (
-            self.remote_dialog(command).is_some().then_some(command),
-            format!("{title} {}", remote.name),
+            self.can_fetch().then_some(Command::Fetch),
+            format!("{} {}", l.text(Text::Fetch), remote.name),
             detail,
         )
     }

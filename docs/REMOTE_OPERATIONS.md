@@ -1,6 +1,6 @@
 # Remote operations
 
-Open and authorize the workspace, then use **Remote** in the toolbar or the **Repository** menu. The initial selection comes from the current upstream, then `origin`, then the first configured remote. Selecting a remote or opening the menu reads local data. The selector shows fetch and push endpoints, the upstream, and divergence against local tracking refs. A successful fetch records its UTC time for the active workspace.
+Open and authorize the workspace, then use the remote control in the toolbar or the **Repository** menu. The remote settings selector shows endpoints, the upstream and divergence against local tracking refs. Its initial selection comes from the current upstream, then `origin`, then the first configured remote. Selecting a remote or opening the menu reads local data. A successful fetch records its UTC time for the active workspace.
 
 ## Configure remotes
 
@@ -8,7 +8,7 @@ Add, edit, rename, or confirm removal of a remote. A blank push URL uses the fet
 
 ## Fetch, pull and push
 
-- **Fetch** sends an explicit request to the selected remote or the checked remotes. It updates and prunes branches within each selected remote's tracking namespace. Other remotes, tags and local branches keep their refs. Batch fetch stops on the first failure and records the remotes that completed.
+- **Fetch origin** in the toolbar starts the fetch immediately. **Repository → Fetch** and its shortcut use the same target. When there is no `origin`, the toolbar names the selected remote it will fetch. Direct fetch uses the linked workspace account for a matching GitHub HTTPS URL, anonymous access for other HTTPS URLs, and the normal OpenSSH identities and host verification for SSH. Use remote settings for another target, batch fetch or explicit authentication and trust options. Fetch updates and prunes the selected remote's tracking namespace. Other remotes, tags and local branches keep their refs. Batch fetch stops on the first failure and records the remotes that completed.
 - **Pull** requires an attached branch, a configured upstream and a clean worktree. The confirmation shows the destination branch and locally known divergence. Choose Fast-forward, Merge or Rebase. A divergent fast-forward-only operation keeps the fetched refs and reports that integration requires a different strategy. A fast-forward updates the branch, while an already integrated tip returns an up-to-date outcome.
 - **Merge pull** uses the Changes workspace for any pending merge. Resolve files externally, stage the resolutions in Changes and finish the merge with the regular author and signing controls.
 - **Rebase pull** rewrites a linear chain of unsigned commits. When conflicts arise, resolve them externally, stage them in Changes and select **Continue rebase**. **Abort rebase** requires confirmation and an unchanged conflict snapshot. If recovery controls are unavailable because the operation was started externally, the session was restarted or the proof no longer matches, inspect the Git state and recover with the Git CLI. The app leaves those files and metadata in place.

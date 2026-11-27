@@ -293,9 +293,8 @@ impl Command {
             Branches => workspace.is_some() || shell.screen == Screen::Demo,
             ZoomIn => shell.options.zoom < 2.0,
             ZoomOut => shell.options.zoom > 1.0,
-            Push | Pull | Fetch => {
-                managed.is_some_and(|managed| managed.remote_dialog(self).is_some())
-            }
+            Fetch => managed.is_some_and(super::ManagerUi::can_fetch),
+            Push | Pull => managed.is_some_and(|managed| managed.remote_dialog(self).is_some()),
             Forget => workspace.is_some() && managed.is_some_and(super::ManagerUi::usable),
             Terminal | Editor => workspace.is_some() && cfg!(target_os = "linux"),
             FileManager | RepositorySettings | Overview => workspace.is_some(),
@@ -540,7 +539,13 @@ impl Desktop {
         if let Some(managed) = &mut self.managed {
             let github = &managed.view.github;
             match command {
-                Push | Pull | Fetch => {
+                Fetch => {
+                    if let Some(intent) = managed.fetch_intent() {
+                        self.screen = Screen::Workspace;
+                        managed.send(RepositoryAction::Remote(intent));
+                    }
+                }
+                Push | Pull => {
                     if let Some(dialog) = managed.remote_dialog(command)
                         && let Some(view) = &managed.view.remotes
                     {

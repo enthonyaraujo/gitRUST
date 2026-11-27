@@ -27,6 +27,7 @@ pub(super) struct State {
     cancellation: Option<Cancellation>,
     bindings: GithubBindings,
     before: Option<(PathBuf, u64)>,
+    authorizing_remote: bool,
     cloned: Option<CloneResult>,
     git_write: bool,
     profile_read_failed: bool,
@@ -325,6 +326,7 @@ impl Coordinator {
             self.github.worker = Some(sender);
         }
         let cancel = Cancellation::default();
+        let authorizing_remote = matches!(&job, Job::Authorize { .. });
         if self
             .github
             .worker
@@ -338,6 +340,7 @@ impl Coordinator {
                 .clone()
                 .zip(self.view.remotes.as_ref().map(|view| view.version));
             self.github.cancellation = Some(cancel);
+            self.github.authorizing_remote = authorizing_remote;
             self.view.github.busy = true;
             self.view.github.notice = None;
         } else {
@@ -352,6 +355,7 @@ impl Coordinator {
             .take()
             .is_some_and(|flag| flag.check().is_err());
         let before = self.github.before.take();
+        let authorizing_remote = std::mem::take(&mut self.github.authorizing_remote);
         let previous_client = self.view.github.client_id.clone();
         self.github.browser_url = None;
         let previous_view = std::mem::replace(&mut self.view.github, result.view);
@@ -440,6 +444,27 @@ impl Coordinator {
                     Notice::LocalGitFailed
                 });
             }
+        }
+        self.report_remote_authorization(authorizing_remote.then_some(before).flatten());
+    }
+
+    fn report_remote_authorization(&mut self, workspace: Option<(PathBuf, u64)>) {
+        if let (Some((path, version)), Some(notice)) = (workspace, self.view.github.notice)
+            && self.view.activity == gitrust_core::workspaces::Activity::Idle
+            && self.view.github.workspace.as_ref() == Some(&path)
+            && let Some(remotes) = self
+                .view
+                .remotes
+                .as_mut()
+                .filter(|view| view.version == version)
+        {
+            remotes.notice = Some(match notice {
+                Notice::Cancelled => RemoteNotice::Cancelled,
+                Notice::Timeout => RemoteNotice::Timeout,
+                Notice::Offline => RemoteNotice::Offline,
+                Notice::LocalGitFailed => RemoteNotice::Stale,
+                _ => RemoteNotice::Authentication,
+            });
         }
     }
 

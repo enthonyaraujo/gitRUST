@@ -82,7 +82,7 @@ catalog! {
     Changes => "Changes", "Alterações";
     History => "History", "Histórico";
     Remote => "Remote", "Remoto";
-    Fetch => "Fetch", "Buscar (fetch)";
+    Fetch => "Fetch", "Buscar";
     Pull => "Pull", "Baixar (pull)";
     Push => "Push", "Enviar (push)";
     NoGit => "Git integration unavailable", "Integração com Git indisponível";

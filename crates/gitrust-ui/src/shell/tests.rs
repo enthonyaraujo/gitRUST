@@ -546,3 +546,127 @@ fn desktop_accelerators_distinguish_shift_and_respect_zoom_limits() {
         assert!((shell.options.zoom - zoom).abs() < f32::EPSILON);
     }
 }
+
+#[test]
+fn toolbar_and_keyboard_fetch_origin_without_opening_configuration() {
+    use gitrust_core::{
+        github::{AccountId, AuthMethod, RepositoryKey},
+        remotes::{Credential, Remote, RemoteAction, RemotesView},
+        workspaces::{Activity, ChangeCounts, Checkout, RepositoryView, Workspace},
+    };
+
+    let ctx = Context::default();
+    ctx.enable_accesskit();
+    let mut shell = Desktop::new(&ctx, UiOptions::default());
+    shell.enable_repository_management();
+    let mut view = RepositoryView {
+        git_available: true,
+        activity: Activity::Idle,
+        active: Some(Workspace {
+            path: "/fixture".into(),
+            checkout: Checkout::Branch("main".into()),
+            has_remote: true,
+            changes: Some(ChangeCounts::default()),
+        }),
+        remotes: Some(RemotesView {
+            version: 27,
+            upstream: Some(("upstream".into(), "main".into())),
+            ahead_behind: Some((3, 2)),
+            entries: [
+                Remote {
+                    name: "upstream".into(),
+                    fetch: Some("https://other.example/repository.git".into()),
+                    push: None,
+                },
+                Remote {
+                    name: "origin".into(),
+                    fetch: Some("https://github.com/fixture/example.git".into()),
+                    push: None,
+                },
+            ]
+            .into(),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    shell.set_repository_view(view.clone());
+    let time = press_fetch_toolbar(&ctx, &mut shell);
+    let Some(RepositoryAction::Remote(intent)) = shell.take_repository_action() else {
+        panic!("click should submit a remote operation directly");
+    };
+    assert_eq!(intent.version, 27);
+    assert!(matches!(
+        intent.action,
+        RemoteAction::Fetch(names, auth) if names == ["origin"] && matches!(auth.credential, Credential::Anonymous)
+    ));
+
+    view.github.workspace_account = Some(AccountId {
+        method: AuthMethod::Browser,
+        number: 1,
+    });
+    view.github.workspace_repo = RepositoryKey::new("fixture", "example");
+    shell.set_repository_view(view);
+    let _ = render(
+        &ctx,
+        &mut shell,
+        RawInput {
+            events: vec![key(Key::T, Modifiers::COMMAND.plus(Modifiers::SHIFT))],
+            ..input(time)
+        },
+    );
+    let Some(RepositoryAction::Remote(intent)) = shell.take_repository_action() else {
+        panic!("shortcut should submit a remote operation directly");
+    };
+    assert!(matches!(
+        intent.action,
+        RemoteAction::Fetch(names, auth) if names == ["origin"] && matches!(auth.credential, Credential::LinkedAccount)
+    ));
+}
+
+fn press_fetch_toolbar(ctx: &Context, shell: &mut Desktop) -> f64 {
+    let mut target = None;
+    let mut time = 0.0;
+    for _ in 0..4 {
+        let update = render(ctx, shell, input(time))
+            .platform_output
+            .accesskit_update
+            .expect("accessibility tree");
+        target = update
+            .nodes
+            .iter()
+            .find_map(|(_, node)| {
+                node.label()
+                    .is_some_and(|label| label.starts_with("Fetch origin,"))
+                    .then(|| node.bounds())
+                    .flatten()
+            })
+            .or(target);
+        time += 0.1;
+    }
+    let bounds = target.expect("fetch origin toolbar control");
+    #[allow(clippy::cast_possible_truncation)]
+    let pos = Pos2::new(
+        f64::midpoint(bounds.x0, bounds.x1) as f32,
+        f64::midpoint(bounds.y0, bounds.y1) as f32,
+    );
+    for pressed in [true, false] {
+        let _ = render(
+            ctx,
+            shell,
+            RawInput {
+                events: vec![
+                    Event::PointerMoved(pos),
+                    Event::PointerButton {
+                        pos,
+                        pressed,
+                        button: egui::PointerButton::Primary,
+                        modifiers: Modifiers::NONE,
+                    },
+                ],
+                ..input(time)
+            },
+        );
+        time += 0.1;
+    }
+    time
+}
