@@ -518,14 +518,20 @@ fn build_native_options(initial_size_override: Option<[f32; 2]>) -> eframe::Nati
     }
 
     let initial_size = initial_size_override.unwrap_or(DEFAULT_WINDOW_SIZE);
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title(metadata.window_title())
+        .with_app_id(PACKAGE_NAME)
+        .with_inner_size(initial_size)
+        .with_min_inner_size(MIN_WINDOW_SIZE)
+        .with_resizable(true);
+    if initial_size_override.is_none() {
+        viewport = viewport
+            .with_max_inner_size(DEFAULT_WINDOW_SIZE)
+            .with_maximize_button(false);
+    }
 
     eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title(metadata.window_title())
-            .with_app_id(PACKAGE_NAME)
-            .with_inner_size(initial_size)
-            .with_min_inner_size(MIN_WINDOW_SIZE)
-            .with_resizable(true),
+        viewport,
         renderer: eframe::Renderer::Wgpu,
         wgpu_options,
         run_and_return: true,

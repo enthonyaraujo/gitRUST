@@ -30,7 +30,7 @@ pub const CURRENT_STAGE_NAME: &str = "Repository Management";
 /// Sized to fit comfortably within `1920×1080` displays running at `200%` `HiDPI`
 /// scaling (`960×540` logical desktop) without compositor clamping, as well as
 /// standard `100%`–`150%` desktop monitors.
-pub const DEFAULT_WINDOW_SIZE: [f32; 2] = [880.0, 500.0];
+pub const DEFAULT_WINDOW_SIZE: [f32; 2] = [1024.0, 644.0];
 
 /// Minimum logical window dimensions `(width, height)` in points.
 pub const MIN_WINDOW_SIZE: [f32; 2] = [640.0, 400.0];

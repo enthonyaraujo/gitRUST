@@ -579,7 +579,8 @@ impl ManagerUi {
             |(previous, current)| (previous - current).abs() > 0.5,
         ) {
             self.sidebar_width = width;
-            ui.ctx().request_repaint();
+            ui.ctx()
+                .request_discard("align toolbar with resized sidebar");
         }
     }
 
