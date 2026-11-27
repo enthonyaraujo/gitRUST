@@ -761,6 +761,15 @@ impl ManagerUi {
             Activity::Cancelling => l.local("Cancelling and cleaning up", "Cancelando e limpando"),
             Activity::Idle | Activity::Trust => return false,
         };
+        if view.activity == Activity::Inspecting {
+            return ui
+                .vertical_centered(|ui| {
+                    ui.spinner();
+                    ui.label(message);
+                    ui.button(l.text(Text::Cancel)).clicked()
+                })
+                .inner;
+        }
         let progress = view.progress.map(|progress| {
             let phase = match progress.phase {
                 TransferPhase::Counting => l.local("Counting objects", "Contando objetos"),
@@ -784,7 +793,7 @@ impl ManagerUi {
         }
         matches!(
             view.activity,
-            Activity::Identifying | Activity::Inspecting | Activity::Creating | Activity::Cloning
+            Activity::Identifying | Activity::Creating | Activity::Cloning
         ) && ui.button(l.text(Text::Cancel)).clicked()
     }
 

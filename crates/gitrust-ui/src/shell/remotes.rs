@@ -463,7 +463,10 @@ impl RemoteUi {
                 .clicked()
                 .then_some(RepositoryAction::Cancel);
         }
-        if let Some(notice) = view.notice {
+        if let Some(notice) = view
+            .notice
+            .filter(|notice| *notice != RemoteNotice::Fetched)
+        {
             ui.colored_label(p.muted, notice_text(notice, l));
         }
         if view.rebase.in_progress() {
