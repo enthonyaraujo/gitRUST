@@ -722,3 +722,74 @@ fn clean_workspace_shortcuts_dispatch_the_advertised_actions() {
         Some(RepositoryAction::Github(Action::Open(url))) if url == "https://github.com/fixture/example"
     ));
 }
+
+#[test]
+fn empty_workspace_centers_the_visible_block_across_scales() {
+    use gitrust_core::workspaces::{Activity, RecentRepositories, RepositoryView};
+
+    for zoom in [1.0, 1.25, 1.5, 2.0] {
+        let ctx = Context::default();
+        ctx.enable_accesskit();
+        let mut shell = Desktop::new(
+            &ctx,
+            UiOptions {
+                zoom,
+                ..UiOptions::default()
+            },
+        );
+        shell.enable_repository_management();
+        shell.set_repository_view(RepositoryView {
+            git_available: true,
+            activity: Activity::Idle,
+            recent: RecentRepositories {
+                paths: vec![format!("/fixture/{}/Workspace", "long-directory/".repeat(8)).into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let mut heading = None;
+        let mut bottom = None;
+        let mut toolbar = None;
+        for time in [0.0, 0.1, 0.2] {
+            let output = render(
+                &ctx,
+                &mut shell,
+                RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1280.0, 760.0))),
+                    time: Some(time),
+                    ..Default::default()
+                },
+            );
+            if let Some(update) = output.platform_output.accesskit_update {
+                for (_, node) in &update.nodes {
+                    match node.label().or(node.value()) {
+                        Some("No repository open") => heading = node.bounds(),
+                        Some("Remove") => bottom = node.bounds(),
+                        Some("Current repository, None open") => toolbar = node.bounds(),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        let heading = heading.expect("empty workspace heading");
+        let bottom = bottom.expect("recent workspace action");
+        let toolbar = toolbar.expect("repository selector");
+        let viewport = ctx.content_rect();
+        assert!(
+            (f64::midpoint(heading.x0, heading.x1) - f64::from(viewport.center().x)).abs() < 2.0,
+            "heading is off-center at scale {zoom}: {heading:?}"
+        );
+        assert!(
+            bottom.x1 <= f64::from(viewport.center().x + 176.0),
+            "recent action extends beyond the centered block at scale {zoom}: {bottom:?}"
+        );
+        // The room above the heading includes the leading icon, and the trailing path
+        // extends below the vertically centered Remove button.
+        let top_gap = heading.y0 - toolbar.y1;
+        let bottom_gap = f64::from(viewport.bottom()) - bottom.y1;
+        assert!(
+            (top_gap - bottom_gap - 20.0).abs() < 18.0,
+            "block is off-center at scale {zoom}: top gap {top_gap}, bottom gap {bottom_gap}"
+        );
+    }
+}

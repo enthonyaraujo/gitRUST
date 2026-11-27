@@ -695,6 +695,11 @@ impl ManagerUi {
         let active = self.view.active.as_ref().map(|workspace| &workspace.path);
         let enabled = self.usable();
         let mut clicked = None;
+        let remove = l.local("Remove", "Remover");
+        let font = egui::TextStyle::Body.resolve(ui.style());
+        let remove_width = ui
+            .fonts_mut(|fonts| fonts.layout_no_wrap(remove.into(), font, p.text).size().x)
+            + 2.0 * ui.spacing().button_padding.x;
         ScrollArea::vertical().max_height(height).show(ui, |ui| {
             let mut matches = 0;
             for path in &self.view.recent.paths {
@@ -708,31 +713,41 @@ impl ManagerUi {
                 }
                 matches += 1;
                 ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        let selected = active == Some(path);
-                        let label = if selected {
-                            format!("{name} · {}", l.local("Active", "Ativo"))
-                        } else if self.view.unavailable.contains(path) {
-                            format!("{name} · {}", l.local("Unavailable", "Indisponível"))
-                        } else {
-                            name
-                        };
-                        ui.add_enabled_ui(enabled, |ui| {
-                            if c::menu_choice(ui, &label, selected, p)
-                                .on_hover_text(full.as_ref())
-                                .clicked()
-                            {
-                                clicked = Some(RepositoryAction::Open(path.clone()));
-                                ui.close_kind(egui::UiKind::Menu);
-                            }
-                        });
-                        ui.add(
-                            egui::Label::new(RichText::new(full.as_ref()).small().color(p.muted))
+                    let width = (ui.available_width() - remove_width - ui.spacing().item_spacing.x)
+                        .max(0.0);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(width, 0.0),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.set_width(width);
+                            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                            let selected = active == Some(path);
+                            let label = if selected {
+                                format!("{name} · {}", l.local("Active", "Ativo"))
+                            } else if self.view.unavailable.contains(path) {
+                                format!("{name} · {}", l.local("Unavailable", "Indisponível"))
+                            } else {
+                                name
+                            };
+                            ui.add_enabled_ui(enabled, |ui| {
+                                if c::menu_choice(ui, &label, selected, p)
+                                    .on_hover_text(full.as_ref())
+                                    .clicked()
+                                {
+                                    clicked = Some(RepositoryAction::Open(path.clone()));
+                                    ui.close_kind(egui::UiKind::Menu);
+                                }
+                            });
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(full.as_ref()).small().color(p.muted),
+                                )
                                 .truncate(),
-                        );
-                    });
+                            );
+                        },
+                    );
                     if ui
-                        .small_button(l.local("Remove", "Remover"))
+                        .small_button(remove)
                         .on_hover_text(
                             l.local("Remove only the saved entry", "Remover apenas da lista"),
                         )

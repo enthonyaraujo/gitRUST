@@ -5,14 +5,17 @@ use super::{Command, FormKind, Language, ManagerUi, Palette, Text, c, weight};
 
 const CARD_WIDTH: f32 = 600.0;
 
-fn centered_column<R>(ui: &mut Ui, content: impl FnOnce(&mut Ui) -> R) -> R {
-    let width = ui.available_width().min(CARD_WIDTH);
+fn centered_column<R>(
+    ui: &mut Ui,
+    max_width: f32,
+    content: impl FnOnce(&mut Ui) -> R,
+) -> egui::InnerResponse<R> {
+    let width = ui.available_width().min(max_width);
     ui.vertical_centered(|ui| {
         ui.allocate_ui_with_layout(vec2(width, 0.0), Layout::top_down(Align::Min), |ui| {
             ui.set_width(width);
             content(ui)
         })
-        .inner
     })
     .inner
 }
@@ -53,7 +56,7 @@ pub(super) fn clean_workspace(
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.add_space(top);
-            centered_column(ui, |ui| {
+            centered_column(ui, CARD_WIDTH, |ui| {
                 let width = ui.available_width();
                 // Leave room on wide layouts for a future project-owned worktree illustration.
                 ui.allocate_ui_with_layout(
@@ -92,6 +95,7 @@ pub(super) fn clean_workspace(
                     });
                 clicked
             })
+            .inner
         })
         .inner
 }
@@ -170,9 +174,14 @@ fn suggestion(
 
 impl ManagerUi {
     pub(super) fn empty_landing(&mut self, ui: &mut Ui, p: Palette, l: Language) {
-        ui.add_space((ui.ctx().content_rect().height() * 0.07).clamp(4.0, 48.0));
-        centered_column(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
+        let height_id = ui.make_persistent_id("empty-landing-height");
+        let previous_height = ui.data(|data| data.get_temp::<f32>(height_id));
+        if let Some(height) = previous_height {
+            // On short viewports the surrounding scroll area keeps the whole block reachable.
+            ui.add_space((ui.available_height() - height).max(0.0) * 0.5);
+        }
+        let block = centered_column(ui, 350.0, |ui| {
+            ui.vertical_centered(|ui| {
                 c::Icon::Repo.show(ui, 30.0, p.accent);
                 ui.heading(RichText::new(l.text(Text::NoRepository)).size(28.0));
             });
@@ -186,6 +195,8 @@ impl ManagerUi {
                 }
             } else {
                 ui.add_enabled_ui(self.usable(), |ui| {
+                    let button_width = (ui.available_width() * 0.58).min(200.0);
+                    let control_height = ui.spacing().interact_size.y;
                     for (kind, command, icon, label) in [
                         (
                             FormKind::Create,
@@ -208,17 +219,25 @@ impl ManagerUi {
                     ] {
                         ui.horizontal_wrapped(|ui| {
                             icon.show(ui, 18.0, p.muted);
-                            let clicked = if kind == FormKind::Open {
-                                c::primary(ui, label, p)
-                            } else {
-                                ui.add(outlined_button(label, p))
-                            }
-                            .clicked();
+                            let clicked = ui
+                                .allocate_ui_with_layout(
+                                    vec2(button_width, control_height),
+                                    Layout::top_down_justified(Align::Min),
+                                    |ui| {
+                                        if kind == FormKind::Open {
+                                            c::primary(ui, label, p)
+                                        } else {
+                                            ui.add(outlined_button(label, p))
+                                        }
+                                        .clicked()
+                                    },
+                                )
+                                .inner;
                             if clicked {
                                 self.open_form(kind);
                             }
                             ui.spacing_mut().item_spacing.x = 3.0;
-                            shortcut_keys(ui, command, p);
+                            ui.horizontal(|ui| shortcut_keys(ui, command, p));
                         });
                     }
                 });
@@ -233,5 +252,11 @@ impl ManagerUi {
                 self.recents(ui, "", p, l, 190.0);
             }
         });
+        let height = block.response.rect.height();
+        if previous_height.is_none_or(|previous| (previous - height).abs() > 0.5) {
+            ui.data_mut(|data| data.insert_temp(height_id, height));
+            ui.ctx()
+                .request_discard("center the empty repository workspace");
+        }
     }
 }
