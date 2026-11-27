@@ -152,7 +152,9 @@ impl ChangesUi {
             command = discard_dialog(ui, review, enabled, l, p).or(command);
         }
         if self.author_dialog {
-            command = self.show_author(ui, workspace, l, p).or(command);
+            command = self
+                .show_author(ui, workspace, layout.github_profile, l, p)
+                .or(command);
         }
         if self.coauthor.is_some() {
             self.show_coauthor(ui, l, p);
@@ -161,7 +163,12 @@ impl ChangesUi {
             command = self.confirm_amend(ui, enabled, l, p).or(command);
         }
         let command = command.or(action.filter(|_| enabled))?;
-        if matches!(command, ChangesCommand::Commit(_)) {
+        if let ChangesCommand::Commit(draft) = &command {
+            if !draft.author.is_valid() {
+                self.author_dialog = true;
+                ui.ctx().request_repaint();
+                return None;
+            }
             self.submitted = true;
         }
         Some(ChangesIntent {
@@ -659,6 +666,7 @@ impl ChangesUi {
         &mut self,
         ui: &Ui,
         workspace: &Workspace,
+        profile: Option<&gitrust_core::github::Profile>,
         l: Language,
         p: Palette,
     ) -> Option<ChangesCommand> {
@@ -669,6 +677,25 @@ impl ChangesUi {
             p,
             l.local("Author and signing", "Autoria e assinatura"),
             |ui| {
+                if let Some(profile) = profile
+                    && ui
+                        .button(format!(
+                            "{} @{}",
+                            l.local("Use GitHub identity", "Usar identidade do GitHub"),
+                            profile.login
+                        ))
+                        .clicked()
+                {
+                    self.draft.author.name.clone_from(
+                        profile
+                            .name
+                            .as_ref()
+                            .filter(|name| !name.trim().is_empty())
+                            .unwrap_or(&profile.login),
+                    );
+                    self.draft.author.email =
+                        format!("{}+{}@users.noreply.github.com", profile.id, profile.login);
+                }
                 text_field(
                     ui,
                     l.local("Name", "Nome"),
@@ -681,7 +708,10 @@ impl ChangesUi {
                     &mut self.draft.author.email,
                     false,
                 );
-                ui.label(l.local("Identity applies only to this commit. Amend preserves the original author.", "A identidade vale apenas para este commit. A emenda preserva a autoria original."));
+                ui.label(l.local(
+                    "This identity is recorded in the commit. Amend preserves the original author.",
+                    "Esta identidade é registrada no commit. A emenda preserva a autoria original.",
+                ));
                 c::tabs(
                     ui,
                     &mut self.signed,

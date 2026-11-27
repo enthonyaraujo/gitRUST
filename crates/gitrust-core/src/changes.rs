@@ -113,6 +113,25 @@ pub struct CommitAuthor {
     pub email: String,
 }
 
+impl CommitAuthor {
+    /// Check whether the identity can be passed to Git for a commit.
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        let valid = |text: &str| {
+            !text.is_empty()
+                && text.len() <= 4096
+                && !text
+                    .chars()
+                    .any(|c| c.is_control() || matches!(c, '<' | '>'))
+        };
+        let email = self.email.trim();
+        valid(self.name.trim())
+            && valid(email)
+            && email.contains('@')
+            && !email.chars().any(char::is_whitespace)
+    }
+}
+
 /// Explicit signing approval for one commit.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub enum CommitSigning {

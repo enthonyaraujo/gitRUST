@@ -110,7 +110,8 @@ impl Form {
     }
 }
 
-pub(super) struct WorkspaceLayout {
+pub(super) struct WorkspaceLayout<'a> {
+    pub(super) github_profile: Option<&'a gitrust_core::github::Profile>,
     pub tab: Tab,
     pub has_changes: bool,
     pub readable: bool,
@@ -120,7 +121,7 @@ pub(super) struct WorkspaceLayout {
     pub palette: Palette,
 }
 
-impl WorkspaceLayout {
+impl WorkspaceLayout<'_> {
     pub(super) fn tabs(&mut self, ui: &mut Ui, l: Language, p: Palette) {
         let tabs = [
             (Tab::Changes, l.text(Text::Changes)),
@@ -487,7 +488,15 @@ impl ManagerUi {
         let changes = self.view.changes.as_ref();
         let navigation = self.view.navigation.as_ref();
         let priority = self.action.take();
+        let github = &self.view.github;
+        let account_id = github.workspace_account.or(github.active);
         let mut layout = WorkspaceLayout {
+            github_profile: github
+                .accounts
+                .iter()
+                .find(|account| Some(account.id) == account_id)
+                .filter(|account| account.connection != gitrust_core::github::Connection::Reconnect)
+                .map(|account| &account.profile),
             tab: self.navigation.tab,
             has_changes: changes.is_some(),
             readable: self.idle() && priority.is_none(),

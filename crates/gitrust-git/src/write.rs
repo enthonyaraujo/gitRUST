@@ -772,22 +772,11 @@ pub(super) fn identity(
     author: &CommitAuthor,
     original: Option<&Signature>,
 ) -> Result<Vec<(&'static str, OsString)>, GitError> {
-    let valid = |text: &str| {
-        !text.is_empty()
-            && text.len() <= 4096
-            && !text
-                .chars()
-                .any(|c| c.is_control() || matches!(c, '<' | '>'))
-    };
-    let name = author.name.trim();
-    let email = author.email.trim();
-    if !valid(name)
-        || !valid(email)
-        || !email.contains('@')
-        || email.chars().any(char::is_whitespace)
-    {
+    if !author.is_valid() {
         return Err(GitError::AuthorRequired);
     }
+    let name = author.name.trim();
+    let email = author.email.trim();
     let mut env = vec![
         ("GIT_COMMITTER_NAME", name.into()),
         ("GIT_COMMITTER_EMAIL", email.into()),
