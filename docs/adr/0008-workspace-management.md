@@ -18,4 +18,4 @@ Periodic status polling would detect changes without platform watchers and wake 
 
 ## Consequences
 
-Redirection, embedded credentials, shallow or partial clone, external filters, LFS materialization and automatic submodule checkout remain outside the supported policy. Local paths, the selected Git installation and its certificate roots are trusted prerequisites. Deadlines are cooperative around filesystem operations. Authorization is required after restart, and a new catalog record becomes durable only after successful profile replacement.
+Redirection, embedded credentials, shallow or partial clone, external filters, LFS materialization and automatic submodule checkout remain outside the supported policy. Local paths, the selected Git installation and its certificate roots are trusted prerequisites. Deadlines are cooperative around filesystem operations. Saved approvals survive restart only for the same canonical repository topology and filesystem directory identities. A new catalog record becomes durable only after successful profile replacement.

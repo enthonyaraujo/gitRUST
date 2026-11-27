@@ -10,7 +10,7 @@ mod github;
 pub(crate) use github::launch_browser;
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, mpsc},
     thread::{self, JoinHandle},
@@ -164,6 +164,7 @@ struct Coordinator {
     navigation: navigation::State,
     remotes: remotes::State,
     github: github::State,
+    approvals: BTreeMap<PathBuf, Vec<u8>>,
     trusted: HashMap<PathBuf, TrustedRepository>,
     pending: Option<Pending>,
     events: Sender<WorkerEvent>,
@@ -208,6 +209,7 @@ impl Coordinator {
             navigation: navigation::State::default(),
             remotes: remotes::State::default(),
             github: github::State::default(),
+            approvals: BTreeMap::new(),
             trusted: HashMap::new(),
             pending: None,
             events,
@@ -275,6 +277,10 @@ impl Coordinator {
         if let Some(store) = &self.store {
             match store.load_recent() {
                 Ok(recent) => self.view.recent = recent,
+                Err(_) => self.view.storage_issue = true,
+            }
+            match store.load_workspace_approvals() {
+                Ok(approvals) => self.approvals = approvals,
                 Err(_) => self.view.storage_issue = true,
             }
             if let Ok(prefs) = store.load_preferences() {
@@ -648,6 +654,14 @@ impl Coordinator {
             self.inspect(trust.clone(), false);
             return;
         }
+        if !new
+            && self.view.recent.paths.iter().any(|recent| recent == path)
+            && let Some(record) = candidate.approval_record()
+            && self.approvals.get(path) == Some(&record)
+        {
+            self.inspect(candidate.authorize_local_metadata(), false);
+            return;
+        }
         self.view.candidate = Some(path.to_owned());
         self.candidate = Some(candidate);
         self.view.activity = Activity::Trust;
@@ -698,6 +712,9 @@ impl Coordinator {
         self.view.activity = Activity::Idle;
         self.view.issue = None;
         if !refresh {
+            if let Some(record) = info.repository.approval_record() {
+                self.approvals.insert(path.clone(), record);
+            }
             self.view.recent.open(path);
             self.save_recent();
         }
@@ -752,6 +769,7 @@ impl Coordinator {
 
     fn forget(&mut self, path: &Path) {
         self.view.recent.forget(path);
+        self.approvals.remove(path);
         self.view.unavailable.retain(|entry| entry != path);
         self.trusted.remove(path);
         let active = self
@@ -787,11 +805,13 @@ impl Coordinator {
     }
 
     fn save_recent(&mut self) {
-        if self
-            .store
-            .as_ref()
-            .is_none_or(|store| store.save_recent(&self.view.recent).is_err())
-        {
+        self.approvals
+            .retain(|path, _| self.view.recent.paths.contains(path));
+        if self.store.as_ref().is_none_or(|store| {
+            let recent = store.save_recent(&self.view.recent);
+            let approvals = store.save_workspace_approvals(&self.approvals);
+            recent.is_err() || approvals.is_err()
+        }) {
             self.view.storage_issue = true;
         }
     }
@@ -1145,22 +1165,13 @@ mod integration_tests {
             preferences
         );
         let service = make_service();
-        let view = until(&service, |view| view.activity == Activity::Trust);
-        assert!(view.active.is_none());
-        assert_eq!(view.recent.last.as_deref(), Some(first.as_path()));
-        assert_eq!(view.candidate.as_deref(), Some(first.as_path()));
-        service.send(RepositoryAction::Authorize {
-            path: first.clone(),
-            accepted: false,
+        let view = until(&service, |view| {
+            view.active
+                .as_ref()
+                .is_some_and(|active| active.path == first)
         });
-        assert!(
-            until(&service, |view| view.issue
-                == Some(WorkspaceIssue::Security))
-            .active
-            .is_none()
-        );
-        open(&service, &first, &first, true);
-        until(&service, |view| view.active.is_some());
+        assert_eq!(view.recent.last.as_deref(), Some(first.as_path()));
+        assert!(view.candidate.is_none());
         service.send(RepositoryAction::Forget(first.clone()));
         until(&service, |view| {
             view.active.is_none() && !view.recent.paths.contains(&first)
@@ -1173,6 +1184,21 @@ mod integration_tests {
         service.send(RepositoryAction::Open(second.clone()));
         until(&service, |view| {
             view.unavailable.contains(&second) && view.issue == Some(WorkspaceIssue::Unavailable)
+        });
+        let replacement = base.join("moved");
+        std::fs::rename(&replacement, &second).expect("restore original repository");
+        std::fs::rename(second.join(".git"), base.join("old-metadata"))
+            .expect("move approved metadata aside");
+        std::fs::create_dir(second.join(".git")).expect("replacement metadata");
+        std::fs::write(second.join(".git/HEAD"), "ref: refs/heads/main\n")
+            .expect("replacement HEAD");
+        std::fs::copy(base.join("old-metadata/config"), second.join(".git/config"))
+            .expect("replacement config");
+        std::fs::create_dir(second.join(".git/objects")).expect("replacement objects");
+        std::fs::create_dir(second.join(".git/refs")).expect("replacement refs");
+        open(&service, &second, &second, false);
+        until(&service, |view| {
+            view.issue == Some(WorkspaceIssue::Security)
         });
         let ordinary = base.join("ordinary-directory");
         std::fs::create_dir(&ordinary).expect("directory without repository metadata");

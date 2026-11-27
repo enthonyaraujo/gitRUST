@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fmt,
     fs::{self, File},
     io::{self, Read, Write},
@@ -337,6 +338,76 @@ impl Store {
             )
         };
         Ok(RecentRepositories { paths, last })
+    }
+
+    /// Read approval records kept separately from recent workspace paths.
+    ///
+    /// # Errors
+    /// Returns an error for unreadable or invalid storage.
+    pub fn load_workspace_approvals(&self) -> Result<BTreeMap<PathBuf, Vec<u8>>, StorageError> {
+        let Some(bytes) = read(&self.recent.with_file_name("workspace-approvals.bin"))? else {
+            return Ok(BTreeMap::new());
+        };
+        let mut input = body(&bytes, b'T')?;
+        let count = usize::from(take_u16(&mut input)?);
+        if count > MAX_RECENT_REPOSITORIES {
+            return Err(StorageError::Invalid);
+        }
+        let mut approvals = BTreeMap::new();
+        for _ in 0..count {
+            let path_len = usize::from(take_u16(&mut input)?);
+            let (path, tail) = input
+                .split_at_checked(path_len)
+                .ok_or(StorageError::Invalid)?;
+            let path = decode_path(path)?;
+            input = tail;
+            let len = usize::from(take_u16(&mut input)?);
+            let (record, tail) = input.split_at_checked(len).ok_or(StorageError::Invalid)?;
+            input = tail;
+            if !path.is_absolute()
+                || record.is_empty()
+                || approvals.insert(path, record.to_vec()).is_some()
+            {
+                return Err(StorageError::Invalid);
+            }
+        }
+        if !input.is_empty() {
+            return Err(StorageError::Invalid);
+        }
+        Ok(approvals)
+    }
+
+    /// Atomically save the repository topology records approved by the user.
+    ///
+    /// # Errors
+    /// Returns an error for invalid records or a failed write.
+    pub fn save_workspace_approvals(
+        &self,
+        approvals: &BTreeMap<PathBuf, Vec<u8>>,
+    ) -> Result<(), StorageError> {
+        if approvals.len() > MAX_RECENT_REPOSITORIES {
+            return Err(StorageError::Invalid);
+        }
+        let mut bytes = header(b'T');
+        let count = u16::try_from(approvals.len()).map_err(|_| StorageError::Invalid)?;
+        bytes.extend(count.to_le_bytes());
+        for (path, record) in approvals {
+            if !path.is_absolute() || record.is_empty() {
+                return Err(StorageError::Invalid);
+            }
+            for field in [&encode_path(path)?[..], record.as_slice()] {
+                let length = u16::try_from(field.len()).map_err(|_| StorageError::Invalid)?;
+                bytes.extend(length.to_le_bytes());
+                bytes.extend(field);
+            }
+            if bytes.len() > MAX_BYTES {
+                return Err(StorageError::Invalid);
+            }
+        }
+        write_atomic(
+            &self.recent.with_file_name("workspace-approvals.bin"),
+            &bytes,
+        )
     }
 
     /// Atomically save recent workspace paths without authorizations.

@@ -95,6 +95,22 @@ impl RepositoryCandidate {
         &self.identity
     }
 
+    /// Stable local topology record for matching a previously approved candidate.
+    #[must_use]
+    pub fn approval_record(&self) -> Option<Vec<u8>> {
+        #[cfg(not(unix))]
+        if self.directories.iter().any(Option::is_none) {
+            return None;
+        }
+        let mut record =
+            format!("v1:{:?}:{}", self.directories, self.worktree.is_some()).into_bytes();
+        for path in [&self.location, &self.git_dir, &self.identity.0] {
+            record.push(0);
+            record.extend_from_slice(path.as_os_str().as_encoded_bytes());
+        }
+        Some(record)
+    }
+
     /// Turn an explicit caller trust decision into a scoped capability.
     ///
     /// Call this only after obtaining authorization to execute local Git in

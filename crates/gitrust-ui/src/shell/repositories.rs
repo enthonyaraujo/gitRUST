@@ -819,8 +819,8 @@ impl ManagerUi {
                             });
                         }
                         ui.add(egui::Label::new(candidate.to_string_lossy()).wrap());
-                        ui.label(l.local("Trust this repository only if you control its local Git metadata. Approval lasts for this session.",
-                    "Confie apenas se você controla os metadados Git locais. A autorização vale nesta sessão."));
+                        ui.label(l.local("Trust this repository only if you control its local Git metadata. Approval is remembered for this repository.",
+                    "Confie apenas se você controla os metadados Git locais. A autorização é lembrada para este repositório."));
                         ui.horizontal_wrapped(|ui| {
                         let cancel = ui.button(l.local("Decline", "Recusar"));
                         if ui.memory(|memory| memory.focused().is_none()) {
