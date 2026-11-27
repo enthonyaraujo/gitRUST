@@ -116,11 +116,8 @@ impl Desktop {
                         managed.remote_dialog(commands::Command::Push).is_some(),
                         p,
                     );
-                    if response.clicked()
-                        && let Some(dialog) = managed.remote_dialog(commands::Command::Push)
-                        && let Some(view) = &managed.view.remotes
-                    {
-                        managed.remotes.open(view, dialog);
+                    if response.clicked() {
+                        managed.start_remote(commands::Command::Push);
                     }
                     if ui
                         .add_enabled_ui(managed.can_fetch(), |ui| {

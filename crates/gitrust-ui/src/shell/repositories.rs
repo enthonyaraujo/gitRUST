@@ -340,25 +340,52 @@ impl ManagerUi {
         let view = self.view.remotes.as_ref()?;
         let remote = self.fetch_target()?;
         let endpoint = remote.fetch.as_deref()?;
+        Some(RemoteIntent {
+            version: view.version,
+            action: RemoteAction::Fetch(vec![remote.name.clone()], self.endpoint_auth(endpoint)),
+        })
+    }
+
+    fn endpoint_auth(&self, endpoint: &str) -> Auth {
         let github = &self.view.github;
         let linked = github.workspace_account.is_some()
             && RepositoryKey::from_https(endpoint)
                 .as_ref()
                 .is_some_and(|repo| Some(repo) == github.workspace_repo.as_ref());
-        Some(RemoteIntent {
-            version: view.version,
-            action: RemoteAction::Fetch(
-                vec![remote.name.clone()],
-                Auth {
-                    credential: if linked {
-                        Credential::LinkedAccount
-                    } else {
-                        Credential::Anonymous
-                    },
-                    ..Auth::default()
+        Auth {
+            credential: if linked {
+                Credential::LinkedAccount
+            } else {
+                Credential::Anonymous
+            },
+            ..Auth::default()
+        }
+    }
+
+    pub(super) fn start_remote(&mut self, command: Command) {
+        let Some(dialog) = self.remote_dialog(command) else {
+            return;
+        };
+        let Some(view) = self.view.remotes.as_ref() else {
+            return;
+        };
+        if let RemoteDialog::Push(remote) = &dialog
+            && let Some((name, branch)) = &view.upstream
+            && name == &remote.name
+            && let Some(endpoint) = &remote.push
+        {
+            self.send(RepositoryAction::Remote(RemoteIntent {
+                version: view.version,
+                action: RemoteAction::Push {
+                    remote: name.clone(),
+                    branch: branch.clone(),
+                    track: false,
+                    auth: self.endpoint_auth(endpoint),
                 },
-            ),
-        })
+            }));
+        } else {
+            self.remotes.open(view, dialog);
+        }
     }
 
     pub(super) fn can_publish(&self) -> bool {

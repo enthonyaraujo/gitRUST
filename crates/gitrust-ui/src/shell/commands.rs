@@ -545,12 +545,8 @@ impl Desktop {
                     }
                 }
                 Push | Pull => {
-                    if let Some(dialog) = managed.remote_dialog(command)
-                        && let Some(view) = &managed.view.remotes
-                    {
-                        self.screen = Screen::Workspace;
-                        managed.remotes.open(view, dialog);
-                    }
+                    self.screen = Screen::Workspace;
+                    managed.start_remote(command);
                 }
                 Forget => {
                     self.screen = Screen::Workspace;
