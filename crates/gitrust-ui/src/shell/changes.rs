@@ -162,8 +162,11 @@ impl ChangesUi {
         if self.amend_confirmation == Some(view.version) {
             command = self.confirm_amend(ui, enabled, l, p).or(command);
         }
-        let command = command.or(action.filter(|_| enabled))?;
-        if let ChangesCommand::Commit(draft) = &command {
+        let mut command = command.or(action.filter(|_| enabled))?;
+        if let ChangesCommand::Commit(draft) = &mut command {
+            if let Some(profile) = layout.github_profile {
+                fill_missing_author(&mut draft.author, profile);
+            }
             if !draft.author.is_valid() {
                 self.author_dialog = true;
                 ui.ctx().request_repaint();
@@ -686,15 +689,7 @@ impl ChangesUi {
                         ))
                         .clicked()
                 {
-                    self.draft.author.name.clone_from(
-                        profile
-                            .name
-                            .as_ref()
-                            .filter(|name| !name.trim().is_empty())
-                            .unwrap_or(&profile.login),
-                    );
-                    self.draft.author.email =
-                        format!("{}+{}@users.noreply.github.com", profile.id, profile.login);
+                    self.draft.author = github_author(profile);
                 }
                 text_field(
                     ui,
@@ -798,6 +793,31 @@ impl ChangesUi {
             .inner
             .0
             .then(|| ChangesCommand::Commit(self.make_draft()))
+    }
+}
+
+fn fill_missing_author(
+    author: &mut gitrust_core::changes::CommitAuthor,
+    profile: &gitrust_core::github::Profile,
+) {
+    let fallback = github_author(profile);
+    if author.name.trim().is_empty() {
+        author.name = fallback.name;
+    }
+    if author.email.trim().is_empty() {
+        author.email = fallback.email;
+    }
+}
+
+fn github_author(profile: &gitrust_core::github::Profile) -> gitrust_core::changes::CommitAuthor {
+    gitrust_core::changes::CommitAuthor {
+        name: profile
+            .name
+            .as_ref()
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or(&profile.login)
+            .clone(),
+        email: format!("{}+{}@users.noreply.github.com", profile.id, profile.login),
     }
 }
 
@@ -944,5 +964,27 @@ fn side_description(side: ChangeSide, l: Language) -> &'static str {
             "Não rastreado · arquivo novo na árvore de trabalho",
         ),
         ChangeSide::Conflict => l.local("Conflict · combined diff", "Conflito · diff combinado"),
+    }
+}
+
+#[cfg(test)]
+mod author_tests {
+    use super::*;
+
+    #[test]
+    fn connected_profile_completes_only_missing_commit_fields() {
+        let profile = gitrust_core::github::Profile {
+            id: 42,
+            login: "fixture".into(),
+            name: None,
+        };
+        let mut author = gitrust_core::changes::CommitAuthor::default();
+        fill_missing_author(&mut author, &profile);
+        assert!(author.is_valid());
+        assert_eq!(author.name, "fixture");
+        assert_eq!(author.email, "42+fixture@users.noreply.github.com");
+        author.email = "author@example.invalid".into();
+        fill_missing_author(&mut author, &profile);
+        assert_eq!(author.email, "author@example.invalid");
     }
 }
