@@ -122,10 +122,9 @@ impl ChangesUi {
         } else {
             layout.sidebar_width = Some(c::repository_sidebar(ui, p, layout.delta, |ui| {
                 layout.tabs(ui, l, p);
-                let target = (ui.available_height() * 0.49).clamp(124.0, 202.0);
                 let max = (ui.available_height() - 47.0).clamp(105.0, 290.0);
                 Panel::bottom("changes-composer")
-                    .default_size(target.min(max))
+                    .default_size(268.0_f32.min(max))
                     .resizable(true)
                     .size_range(98.0..=max)
                     .frame(c::panel(p.surface, 4))
