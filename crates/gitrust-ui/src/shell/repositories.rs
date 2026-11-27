@@ -566,21 +566,20 @@ impl ManagerUi {
                 self.action = Some(RepositoryAction::Navigate(action));
             }
         }
-        if let Some(view) = &self.view.remotes
-            && let Some(action) = self
-                .remotes
-                .status(ui, view, self.view.progress, l, p)
-                .or_else(|| {
-                    self.remotes.dialog(
-                        ui,
-                        view,
-                        self.view.github.workspace_account.is_some(),
-                        l,
-                        p,
-                    )
-                })
-        {
-            self.action = Some(action);
+        if let Some(view) = &self.view.remotes {
+            let toolbar_shows_progress =
+                view.busy && matches!(self.fetch, super::fetch::FetchState::Fetching { .. });
+            let status = if toolbar_shows_progress {
+                None
+            } else {
+                self.remotes.status(ui, view, self.view.progress, l, p)
+            };
+            if let Some(action) = status.or_else(|| {
+                self.remotes
+                    .dialog(ui, view, self.view.github.workspace_account.is_some(), l, p)
+            }) {
+                self.action = Some(action);
+            }
         }
     }
 
