@@ -46,6 +46,7 @@ pub(crate) enum Icon {
     Branch,
     Remote,
     Sync,
+    Push,
     SyncRotating(f32),
     Chevron,
     Settings,
@@ -119,6 +120,11 @@ impl Icon {
             Self::Chevron => {
                 line(0.25, 0.40, 0.50, 0.64);
                 line(0.50, 0.64, 0.75, 0.40);
+            }
+            Self::Push => {
+                line(0.5, 0.82, 0.5, 0.18);
+                line(0.5, 0.18, 0.22, 0.46);
+                line(0.5, 0.18, 0.78, 0.46);
             }
             Self::Sync => Self::paint_sync(pen, r, stroke, 0.0),
             Self::SyncRotating(angle) => Self::paint_sync(pen, r, stroke, angle),
@@ -514,7 +520,7 @@ pub(crate) fn context_button(
     } else {
         rect.right() - 6.0
     };
-    let remote = matches!(icon, Icon::Sync | Icon::SyncRotating(_));
+    let remote = matches!(icon, Icon::Push | Icon::Sync | Icon::SyncRotating(_));
     for (text, strong, y) in [(label, remote, 8.0), (value, !remote, 25.0)] {
         let (color, font) = if strong {
             (

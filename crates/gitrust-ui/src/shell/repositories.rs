@@ -260,13 +260,35 @@ impl ManagerUi {
         None
     }
 
+    pub(super) fn pending_push(&self) -> Option<(&Remote, u64)> {
+        let view = self.view.remotes.as_ref()?;
+        let (ahead, behind) = view.ahead_behind?;
+        let (upstream, _) = view.upstream.as_ref()?;
+        if ahead == 0
+            || behind != 0
+            || view.current.is_none()
+            || view.rebase.in_progress()
+            || self.view.active.as_ref()?.changes.is_none()
+        {
+            return None;
+        }
+        let remote = view
+            .entries
+            .iter()
+            .find(|remote| &remote.name == upstream && remote.push.is_some())?;
+        Some((remote, ahead))
+    }
+
     pub(super) fn remote_dialog(&self, action: Command) -> Option<RemoteDialog> {
         let view = self.view.remotes.as_ref()?;
         let active = self.view.active.as_ref()?;
         if !self.usable() || self.view.activity != Activity::Idle {
             return None;
         }
-        let remote = self.remotes.selected(view)?;
+        let remote = (action == Command::Push)
+            .then(|| self.pending_push().map(|(remote, _)| remote))
+            .flatten()
+            .or_else(|| self.remotes.selected(view))?;
         let tracked = view
             .upstream
             .as_ref()
@@ -438,6 +460,7 @@ impl ManagerUi {
         false
     }
 
+    #[allow(clippy::too_many_lines)] // Keep workspace action priority and tab rendering together.
     fn real_changes(
         &mut self,
         ui: &mut Ui,
@@ -512,6 +535,13 @@ impl ManagerUi {
                 if let Some(issue) = self.view.issue {
                     ui.colored_label(p.error, issue_text(l, issue));
                 }
+                let pending_push = self.pending_push().map(|(remote, count)| {
+                    (
+                        remote.name.clone(),
+                        count,
+                        self.remote_dialog(Command::Push).is_some(),
+                    )
+                });
                 if let Some(changes) = changes
                     && let Some(intent) = self.changes.show(
                         ui,
@@ -522,7 +552,15 @@ impl ManagerUi {
                             && self.view.remotes.as_ref().is_none_or(|view| !view.busy),
                         &mut layout,
                         |ui| {
-                            *command = landing::clean_workspace(ui, p, l, &self.view);
+                            *command = landing::clean_workspace(
+                                ui,
+                                p,
+                                l,
+                                &self.view,
+                                pending_push.as_ref().map(|(name, count, enabled)| {
+                                    (name.as_str(), *count, *enabled)
+                                }),
+                            );
                         },
                     )
                 {

@@ -49,6 +49,7 @@ pub(super) fn clean_workspace(
     p: Palette,
     l: Language,
     view: &RepositoryView,
+    pending_push: Option<(&str, u64, bool)>,
 ) -> Option<Command> {
     let top = (ui.available_height() * 0.07).clamp(4.0, 48.0);
     ScrollArea::vertical()
@@ -73,6 +74,26 @@ pub(super) fn clean_workspace(
                 );
                 ui.add_space(24.0);
                 let mut clicked = None;
+                if let Some((remote, count, enabled)) = pending_push {
+                    Frame::new().fill(p.selected).stroke(Stroke::new(1.0, p.accent))
+                        .corner_radius(6).inner_margin(12).show(ui, |ui| {
+                            ui.set_width((width - 26.0).max(0.0));
+                            ui.strong(l.local("Commits ready to push", "Commits prontos para enviar"));
+                            ui.label(match (l, count) {
+                                (Language::English, 1) => format!("1 local commit to push to {remote}."),
+                                (Language::Portuguese, 1) => format!("1 commit local para enviar a {remote}."),
+                                (Language::English, _) => format!("{count} local commits to push to {remote}."),
+                                (Language::Portuguese, _) => format!("{count} commits locais para enviar a {remote}."),
+                            });
+                            ui.horizontal_wrapped(|ui| {
+                                if ui.add_enabled_ui(enabled, |ui| c::primary(ui, &format!("{} {remote}", Command::Push.label(l)), p)).inner.clicked() {
+                                    clicked = Some(Command::Push);
+                                }
+                                shortcut_keys(ui, Command::Push, p);
+                            });
+                        });
+                    ui.add_space(8.0);
+                }
                 Frame::new()
                     .fill(p.surface)
                     .stroke(Stroke::new(1.0, p.divider))

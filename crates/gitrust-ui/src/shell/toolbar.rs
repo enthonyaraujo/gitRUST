@@ -97,33 +97,70 @@ impl Desktop {
             self.repository_button(ui, p, l, initial_popup, repo_width);
             self.branch_button(ui, p, l, block_width, active, initial_popup);
             if let Some(managed) = self.managed.as_mut().filter(|_| active) {
-                let response = managed
-                    .fetch_button(ui, block_width, l, p)
-                    .unwrap_or_else(|| {
-                        let (label, detail) = if managed.view.remotes.is_some() {
-                            (
-                                l.local("Publish repository", "Publicar repositório"),
-                                "GitHub",
-                            )
-                        } else {
-                            (l.text(Text::Remote), l.local("Loading…", "Carregando…"))
-                        };
-                        let response = c::context_button(
-                            ui,
-                            block_width,
-                            Icon::Sync,
-                            label,
-                            detail,
-                            managed.can_publish(),
-                            p,
-                        );
-                        if response.clicked() {
-                            self.screen = Screen::Github;
-                            managed.github.publish_workspace(&managed.view.github);
-                        }
-                        response
+                let push = managed
+                    .pending_push()
+                    .map(|(remote, count)| (remote.name.clone(), count))
+                    .filter(|_| {
+                        !matches!(managed.fetch, super::fetch::FetchState::Fetching { .. })
                     });
-                // Only the repository settings command opens this menu. A primary click fetches.
+                let response = if let Some((name, count)) = push {
+                    let response = c::context_button(
+                        ui,
+                        (block_width - 30.0).max(50.0),
+                        Icon::Push,
+                        &format!("{} {name}", commands::Command::Push.label(l)),
+                        &format!(
+                            "↑ {count} {}",
+                            if count == 1 { "commit" } else { "commits" }
+                        ),
+                        managed.remote_dialog(commands::Command::Push).is_some(),
+                        p,
+                    );
+                    if response.clicked()
+                        && let Some(dialog) = managed.remote_dialog(commands::Command::Push)
+                        && let Some(view) = &managed.view.remotes
+                    {
+                        managed.remotes.open(view, dialog);
+                    }
+                    if ui
+                        .add_enabled_ui(managed.can_fetch(), |ui| {
+                            c::icon_button(ui, Icon::Sync, l.text(Text::Fetch), p)
+                        })
+                        .inner
+                        .clicked()
+                    {
+                        managed.start_fetch(ui.ctx());
+                    }
+                    response
+                } else {
+                    managed
+                        .fetch_button(ui, block_width, l, p)
+                        .unwrap_or_else(|| {
+                            let (label, detail) = if managed.view.remotes.is_some() {
+                                (
+                                    l.local("Publish repository", "Publicar repositório"),
+                                    "GitHub",
+                                )
+                            } else {
+                                (l.text(Text::Remote), l.local("Loading…", "Carregando…"))
+                            };
+                            let response = c::context_button(
+                                ui,
+                                block_width,
+                                Icon::Sync,
+                                label,
+                                detail,
+                                managed.can_publish(),
+                                p,
+                            );
+                            if response.clicked() {
+                                self.screen = Screen::Github;
+                                managed.github.publish_workspace(&managed.view.github);
+                            }
+                            response
+                        })
+                };
+                // Only the repository settings command opens this menu.
                 egui::Popup::menu(&response)
                     .id(Id::unique(remotes::REMOTE_POPUP))
                     .open_memory(
