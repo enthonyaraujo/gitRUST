@@ -33,7 +33,7 @@ pub const CURRENT_STAGE_NAME: &str = "Repository Management";
 pub const DEFAULT_WINDOW_SIZE: [f32; 2] = [1024.0, 644.0];
 
 /// Minimum logical window dimensions `(width, height)` in points.
-pub const MIN_WINDOW_SIZE: [f32; 2] = [640.0, 400.0];
+pub const MIN_WINDOW_SIZE: [f32; 2] = DEFAULT_WINDOW_SIZE;
 
 /// Build and identity metadata injected by the binary crate at startup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
