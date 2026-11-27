@@ -225,6 +225,12 @@ impl Coordinator {
         service.discover_git();
         service.initialize_github(oauth);
         service.initialize_welcome();
+        if service.view.git_available
+            && let Some(path) = service.view.recent.last.clone()
+        {
+            service.view.offer_welcome = false;
+            service.open(path);
+        }
         service.publish(Some(preferences), None);
         loop {
             let ready = service.pending.is_none() && service.candidate.is_none();
@@ -1139,10 +1145,14 @@ mod integration_tests {
             preferences
         );
         let service = make_service();
-        let view = until(&service, |v| v.git_available);
+        let view = until(&service, |view| view.activity == Activity::Trust);
         assert!(view.active.is_none());
         assert_eq!(view.recent.last.as_deref(), Some(first.as_path()));
-        open(&service, &first, &first, false);
+        assert_eq!(view.candidate.as_deref(), Some(first.as_path()));
+        service.send(RepositoryAction::Authorize {
+            path: first.clone(),
+            accepted: false,
+        });
         assert!(
             until(&service, |view| view.issue
                 == Some(WorkspaceIssue::Security))

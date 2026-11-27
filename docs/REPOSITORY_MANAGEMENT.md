@@ -6,7 +6,7 @@ The interactive desktop opens with **Add local repository**, **Create**, **Clone
 
 Type a path or choose a folder in the native picker. A subdirectory resolves to its containing repository. Review the canonical path and decide whether the app can inspect its local metadata. Normal worktrees, supported linked worktrees and bare repositories follow the Git Engine layout policy. Each worktree has its own canonical catalog key even when the engine shares a scheduling identity for linked worktrees.
 
-Authorization belongs to the current process. After restart, opening a recent entry requires authorization again. A rejected or missing workspace leaves the previous usable workspace available, where applicable. A missing entry remains in recents until it is reopened or removed. An open workspace shows its checkout state and a basic summary of staged, modified, untracked and conflicted paths. Bare repositories show checkout information without a worktree summary.
+Authorization belongs to the current process. On restart the app identifies the last successfully opened workspace and prompts for authorization. Opening any recent entry also requires authorization again. A rejected or missing workspace leaves the previous usable workspace available, where applicable. A missing entry remains in recents until it is reopened or removed. An open workspace shows its checkout state and a basic summary of staged, modified, untracked and conflicted paths. Bare repositories show checkout information without a worktree summary.
 
 ## Create and clone
 
