@@ -1075,6 +1075,14 @@ impl GithubUi {
         }
     }
 
+    pub(super) fn workspace_pulls(&mut self, view: &View) {
+        if let Some(repo) = view.workspace_repo.clone() {
+            self.tab = Tab::Pulls;
+            self.pull_repo = Some(repo.clone());
+            self.refresh_pulls(repo, 1);
+        }
+    }
+
     fn open_pull(&mut self, view: &View, repo: &RepositoryKey) {
         let source = view.workspace_repo.as_ref().unwrap_or(repo);
         self.source_owner = source.owner().into();

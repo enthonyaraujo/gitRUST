@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
-use egui::{Button, Id, RichText, ScrollArea, Stroke, TextEdit, Ui, pos2, vec2};
+use egui::{Button, Id, Panel, RichText, ScrollArea, Stroke, TextEdit, Ui, pos2, vec2};
 use gitrust_core::{
     changes::{CommitAuthor, CommitDraft, CommitSigning},
     navigation::{
@@ -22,7 +22,7 @@ use crate::{
     theme::Palette,
 };
 
-const HISTORY_ROW_HEIGHT: f32 = 74.0;
+const HISTORY_ROW_HEIGHT: f32 = 62.0;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) enum Tab {
@@ -81,10 +81,12 @@ pub(super) struct NavigationUi {
     query: String,
     rows: Option<Arc<Vec<HistoryRow>>>,
     visible: Vec<usize>,
+    graph_width: f32,
     selected: Option<String>,
     diff: DiffView,
     mode: DiffMode,
-    root: Option<String>,
+    anchor: Option<(u64, String, bool)>,
+    previewed: Option<Arc<Details>>,
 }
 
 impl NavigationUi {
@@ -159,51 +161,39 @@ impl NavigationUi {
         l: Language,
         p: Palette,
     ) -> Option<NavigationIntent> {
-        ui.set_width((ui.ctx().content_rect().width() - 24.0).clamp(175.0, 360.0));
-        c::search(
-            ui,
-            Id::unique("branch-filter"),
-            l,
-            p,
-            &mut self.branch_query,
-        );
-        let query = self.branch_query.to_lowercase();
-        ScrollArea::vertical()
-            .max_height((ui.ctx().content_rect().height() * 0.36).clamp(56.0, 270.0))
-            .show(ui, |ui| {
-                for (remote, label) in [
-                    (false, l.local("Local branches", "Branches locais")),
-                    (
-                        true,
-                        l.local("Remote-tracking references", "Referências remotas locais"),
-                    ),
-                ] {
-                    ui.strong(label);
-                    for entry in view.refs.iter().filter(|item| {
-                        item.remote == remote && item.label.to_lowercase().contains(&query)
-                    }) {
-                        let caption = if entry.current {
-                            format!("{} · HEAD", entry.label)
-                        } else {
-                            entry.label.clone()
-                        };
-                        if c::menu_choice(
-                            ui,
-                            &caption,
-                            self.branch.as_ref() == Some(&entry.name),
-                            p,
-                        )
-                        .clicked()
-                        {
-                            self.branch = Some(entry.name.clone());
-                        }
-                    }
-                }
+        ui.set_width((ui.ctx().content_rect().width() - 24.0).clamp(175.0, 410.0));
+        let enabled = writable && !view.busy && view.merge == Merge::None;
+        ui.horizontal(|ui| {
+            let search_width = ui.available_width() * 0.62;
+            ui.vertical(|ui| {
+                ui.set_width(search_width);
+                c::search(
+                    ui,
+                    Id::unique("branch-filter"),
+                    l,
+                    p,
+                    &mut self.branch_query,
+                );
             });
+            if ui
+                .add_enabled(
+                    enabled && view.head.is_some(),
+                    Button::new(l.local("New branch", "Nova branch")).truncate(),
+                )
+                .clicked()
+            {
+                self.open(view, Form::Create(BranchBase::Head));
+                ui.close();
+            }
+        });
+        ui.separator();
+        self.branch_rows(ui, view, l, p);
+        ui.separator();
         let entry = view
             .refs
             .iter()
-            .find(|item| self.branch.as_ref() == Some(&item.name));
+            .find(|item| self.branch.as_ref() == Some(&item.name))
+            .or_else(|| view.refs.iter().find(|item| item.current));
         if let Some(entry) = entry
             && let Some(upstream) = &entry.upstream
         {
@@ -212,7 +202,6 @@ impl NavigationUi {
                 ui.label(format!("↑ {ahead}    ↓ {behind}"));
             }
         }
-        let enabled = writable && !view.busy && view.merge == Merge::None;
         let mut command = None;
         ui.add_enabled_ui(enabled, |ui| {
             if let Some(entry) = entry {
@@ -229,18 +218,58 @@ impl NavigationUi {
                     }
                 });
             }
-            if ui
-                .add_enabled(
-                    view.root.is_some(),
-                    Button::new(l.local("New branch from HEAD", "Nova branch a partir de HEAD")),
-                )
-                .clicked()
+            if Self::menu_available(Some(view), MenuCommand::Merge)
+                && ui
+                    .button(l.local("Choose a branch to merge…", "Escolher branch para merge…"))
+                    .clicked()
             {
-                self.open(view, Form::Create(BranchBase::Head));
+                self.open_menu(view, MenuCommand::Merge);
                 ui.close();
             }
         });
         command
+    }
+
+    fn branch_rows(&mut self, ui: &mut Ui, view: &NavigationView, l: Language, p: Palette) {
+        let query = self.branch_query.trim().to_lowercase();
+        ScrollArea::vertical()
+            .max_height((ui.ctx().content_rect().height() * 0.42).clamp(56.0, 340.0))
+            .show(ui, |ui| {
+                let mut any = false;
+                for (group, label) in [
+                    ((false, true), l.local("Default branch", "Branch padrão")),
+                    ((false, false), l.local("Local branches", "Branches locais")),
+                    (
+                        (true, false),
+                        l.local("Remote-tracking references", "Referências remotas locais"),
+                    ),
+                ] {
+                    let entries = view.refs.iter().filter(|item| {
+                        let is_default =
+                            !item.remote && view.default_branch.as_ref() == Some(&item.name);
+                        (item.remote, is_default) == group
+                            && (query.is_empty() || item.label.to_lowercase().contains(&query))
+                    });
+                    for (index, entry) in entries.enumerate() {
+                        any = true;
+                        if index == 0 {
+                            ui.strong(label);
+                        }
+                        let selected = self
+                            .branch
+                            .as_ref()
+                            .map_or(entry.current, |name| name == &entry.name);
+                        let response =
+                            c::branch_choice(ui, &entry.label, entry.current, selected, p);
+                        if response.clicked() {
+                            self.branch = Some(entry.name.clone());
+                        }
+                    }
+                }
+                if !any {
+                    ui.label(l.local("No matching branches", "Nenhuma branch encontrada"));
+                }
+            });
     }
 
     fn local_actions(
@@ -353,9 +382,14 @@ impl NavigationUi {
         p: Palette,
         layout: &mut WorkspaceLayout,
     ) -> Option<NavigationIntent> {
-        if self.root != view.root {
-            self.root.clone_from(&view.root);
+        let anchor = view
+            .root
+            .as_ref()
+            .map(|root| (view.identity, root.clone(), view.all_refs));
+        if self.anchor != anchor || view.pagination == Pagination::Initial {
+            self.anchor = anchor;
             self.selected = None;
+            self.previewed = None;
             self.pane = Pane::Revisions;
         }
         if view.root.is_none() {
@@ -370,8 +404,7 @@ impl NavigationUi {
             ui.label(l.text(Text::NoHistory));
             return None;
         }
-        let mut command =
-            (view.pagination == Pagination::Initial && !view.busy).then_some(Command::More);
+        let mut command = None;
         if single_pane(ui) {
             layout.tabs(ui, l, p);
             c::tabs(
@@ -392,33 +425,63 @@ impl NavigationUi {
                     None
                 }
             };
-            command = chosen.or(command);
+            command = chosen;
         } else {
-            c::repository_sidebar(ui, p, layout.delta, |ui| {
+            layout.sidebar_width = Some(c::repository_sidebar(ui, p, layout.delta, |ui| {
                 layout.tabs(ui, l, p);
-                command = self.revisions(ui, view, l, p).or(command.take());
-            });
-            let mut show_patch = self.pane == Pane::Diff;
-            c::tabs(
-                ui,
-                &mut show_patch,
-                &[
-                    (false, l.local("Commit details", "Detalhes do commit")),
-                    (true, "Diff"),
-                ],
-                p,
-            );
-            if show_patch {
-                self.pane = Pane::Diff;
-                self.patch(ui, view, l, p);
+                command = self.revisions(ui, view, l, p);
+            }));
+            let inspector = if ui.available_width() >= 590.0 && ui.available_height() >= 245.0 {
+                c::panel(p.background, 8)
+                    .show(ui, |ui| {
+                        self.inspector(
+                            ui,
+                            view,
+                            writable,
+                            l,
+                            p,
+                            layout.readable && command.is_none(),
+                        )
+                    })
+                    .inner
             } else {
-                self.pane = Pane::Details;
-                command = self.details(ui, view, writable, l).or(command);
+                let mut show_patch = self.pane == Pane::Diff;
+                c::tabs(
+                    ui,
+                    &mut show_patch,
+                    &[
+                        (false, l.local("Commit details", "Detalhes do commit")),
+                        (true, "Diff"),
+                    ],
+                    p,
+                );
+                if show_patch {
+                    self.pane = Pane::Diff;
+                    self.patch(ui, view, l, p);
+                    None
+                } else {
+                    self.details(ui, view, writable, l)
+                }
+            };
+            command = command.or(inspector);
+        }
+        if !layout.readable || view.busy {
+            return None;
+        }
+        if command.is_none() {
+            if view.pagination == Pagination::Initial {
+                command = Some(Command::More);
+            } else if self.selected.is_none() && view.details.is_none() && !view.history.is_empty()
+            {
+                let revision = &view.history[0].revision;
+                self.selected = Some(revision.id.clone());
+                command = Some(Command::Details(revision.id.clone(), None));
             }
         }
-        command
-            .filter(|_| !view.busy)
-            .map(|command| intent(view, command))
+        if let Some(Command::Details(id, _)) = &command {
+            self.selected = Some(id.clone());
+        }
+        command.map(|command| intent(view, command))
     }
 
     fn revisions(
@@ -451,6 +514,23 @@ impl NavigationUi {
                 })
                 .map(|(index, _)| index)
                 .collect();
+        }
+        if changed_rows {
+            let lanes = view
+                .history
+                .iter()
+                .map(|row| {
+                    row.edges
+                        .iter()
+                        .fold(row.node, |index, &(from, to)| index.max(from).max(to))
+                })
+                .max()
+                .unwrap_or(0);
+            self.graph_width = match lanes {
+                0 => 18.0,
+                1..=3 => 38.0,
+                _ => 72.0,
+            };
         }
         ui.colored_label(
             p.muted,
@@ -501,9 +581,10 @@ impl NavigationUi {
                 for index in range {
                     let entry = &view.history[self.visible[index]];
                     ui.push_id(&entry.revision.id, |ui| {
-                        if self.revision_row(ui, view, entry, self.visible[index], l, p) {
+                        if self.revision_row(ui, view, entry, self.visible[index], l, p)
+                            && !view.busy
+                        {
                             action = Some(Command::Details(entry.revision.id.clone(), None));
-                            self.selected = Some(entry.revision.id.clone());
                             self.pane = Pane::Details;
                         }
                     });
@@ -523,8 +604,10 @@ impl NavigationUi {
     ) -> bool {
         let row_gap = ui.spacing().item_spacing.y;
         ui.horizontal(|ui| {
-            let (rect, _) =
-                ui.allocate_exact_size(vec2(72.0, HISTORY_ROW_HEIGHT), egui::Sense::hover());
+            let (rect, _) = ui.allocate_exact_size(
+                vec2(self.graph_width, HISTORY_ROW_HEIGHT),
+                egui::Sense::hover(),
+            );
             let previous = if self.query.trim().is_empty() && index > 0 {
                 view.history.get(index - 1)
             } else {
@@ -549,9 +632,12 @@ impl NavigationUi {
                 } else {
                     commit.subject.clone()
                 };
-                let response = ui.add(
-                    Button::selectable(self.selected.as_ref() == Some(&commit.id), summary)
-                        .truncate(),
+                let response = c::workspace_row(
+                    ui,
+                    &summary,
+                    None,
+                    self.selected.as_ref() == Some(&commit.id),
+                    p,
                 );
                 ui.add(
                     egui::Label::new(format!(
@@ -601,60 +687,118 @@ impl NavigationUi {
             .id_salt("real-commit-details")
             .show(ui, |ui| {
                 let mut action = commit_metadata(ui, detail, l);
-                if ui
-                    .add_enabled(
-                        writable && !view.busy && view.merge == Merge::None,
-                        Button::new(
-                            l.local("New branch from commit", "Nova branch a partir do commit"),
-                        ),
-                    )
-                    .clicked()
-                {
-                    self.open(
-                        view,
-                        Form::Create(BranchBase::Commit(detail.revision.id.clone())),
-                    );
-                }
+                self.branch_from_commit(ui, view, detail, writable, l);
                 ui.separator();
-                ui.strong(l.local("Changed files", "Arquivos alterados"));
-                ScrollArea::vertical()
-                    .id_salt("commit-paths")
-                    .max_height(195.0)
-                    .show_rows(ui, 24.0, detail.files.len(), |ui, visible| {
-                        for index in visible {
-                            let file = &detail.files[index];
-                            let stats = file.lines.map_or_else(
-                                || l.text(Text::Binary).to_owned(),
-                                |(add, remove)| format!("+{add} −{remove}"),
-                            );
-                            let path = file.path.to_string_lossy();
-                            let title = file.previous.as_ref().map_or_else(
-                                || path.to_string(),
-                                |old| format!("{} → {path}", old.display()),
-                            );
-                            if ui
-                                .add(
-                                    Button::new(format!("{title}  {stats}"))
-                                        .truncate()
-                                        .min_size(vec2(0.0, 24.0)),
-                                )
-                                .clicked()
-                            {
-                                action = Some(Command::Patch(
-                                    detail.revision.id.clone(),
-                                    detail.parent.clone(),
-                                    file.path.clone(),
-                                ));
-                                self.pane = Pane::Diff;
-                            }
-                        }
-                    });
+                let p = Palette::for_theme(ui.ctx().theme());
+                if let Some(patch) = commit_files(ui, detail, view, l, 195.0, p) {
+                    action = Some(patch);
+                    self.pane = Pane::Diff;
+                }
                 if view.busy {
                     c::loading(ui, l.local("Loading…", "Carregando…"), None);
                 }
                 action
             })
             .inner
+    }
+
+    fn inspector(
+        &mut self,
+        ui: &mut Ui,
+        view: &NavigationView,
+        writable: bool,
+        l: Language,
+        p: Palette,
+        allow_initial_patch: bool,
+    ) -> Option<Command> {
+        let Some(detail) = &view.details else {
+            return self.details(ui, view, writable, l);
+        };
+        ui.add(egui::Label::new(RichText::new(&detail.revision.subject).heading()).truncate());
+        ui.horizontal_wrapped(|ui| {
+            ui.label(&detail.revision.author.name);
+            ui.colored_label(p.muted, &detail.revision.author.time);
+            ui.monospace(&detail.revision.id[..12]);
+            if c::icon_button(ui, c::Icon::Copy, l.local("Copy hash", "Copiar hash"), p).clicked() {
+                ui.ctx().copy_text(detail.revision.id.clone());
+            }
+        });
+        let metadata = ui
+            .collapsing(l.local("Commit details", "Detalhes do commit"), |ui| {
+                ScrollArea::vertical()
+                    .max_height(130.0)
+                    .show(ui, |ui| {
+                        let action = commit_metadata(ui, detail, l);
+                        self.branch_from_commit(ui, view, detail, writable, l);
+                        action
+                    })
+                    .inner
+            })
+            .body_returned
+            .flatten();
+        ui.separator();
+        let files = Panel::left("history-files")
+            .resizable(true)
+            .default_size(223.0)
+            .size_range(143.0..=(ui.available_width() * 0.46))
+            .frame(c::panel(p.surface, 8))
+            .show(ui, |ui| {
+                commit_files(ui, detail, view, l, ui.available_height(), p)
+            })
+            .inner;
+        c::panel(p.background, 8).show(ui, |ui| {
+            if detail.files.is_empty() {
+                ui.label(l.local(
+                    "No changed files in this comparison",
+                    "Nenhum arquivo alterado nesta comparação",
+                ));
+            } else if view.busy && view.patch.is_none() {
+                c::loading(ui, l.local("Loading…", "Carregando…"), None);
+            } else {
+                self.patch(ui, view, l, p);
+            }
+        });
+        let action = metadata.or(files);
+        if allow_initial_patch
+            && action.is_none()
+            && !view.busy
+            && view.patch.is_none()
+            && self
+                .previewed
+                .as_ref()
+                .is_none_or(|previous| !Arc::ptr_eq(previous, detail))
+            && let Some(file) = detail.files.first()
+        {
+            self.previewed = Some(detail.clone());
+            return Some(Command::Patch(
+                detail.revision.id.clone(),
+                detail.parent.clone(),
+                file.path.clone(),
+            ));
+        }
+        action
+    }
+
+    fn branch_from_commit(
+        &mut self,
+        ui: &mut Ui,
+        view: &NavigationView,
+        detail: &Details,
+        writable: bool,
+        l: Language,
+    ) {
+        if ui
+            .add_enabled(
+                writable && !view.busy && view.merge == Merge::None,
+                Button::new(l.local("New branch from commit", "Nova branch a partir do commit")),
+            )
+            .clicked()
+        {
+            self.open(
+                view,
+                Form::Create(BranchBase::Commit(detail.revision.id.clone())),
+            );
+        }
     }
 
     fn patch(&mut self, ui: &mut Ui, view: &NavigationView, l: Language, p: Palette) {
@@ -665,7 +809,9 @@ impl NavigationUi {
             ));
             return;
         };
-        ui.strong(patch.key.path.to_string_lossy());
+        ui.add(
+            egui::Label::new(RichText::new(patch.key.path.to_string_lossy()).strong()).truncate(),
+        );
         if patch.binary {
             ui.colored_label(p.warning, l.text(Text::Binary));
         }
@@ -833,7 +979,10 @@ impl NavigationUi {
         let selected = dialog.inner.1?;
         self.tab = Tab::History;
         self.pane = Pane::Details;
-        self.root.clone_from(&view.root);
+        self.anchor = view
+            .root
+            .as_ref()
+            .map(|root| (view.identity, root.clone(), view.all_refs));
         self.selected = Some(selected.clone());
         Some(intent(view, Command::Details(selected, None)))
     }
@@ -1043,6 +1192,63 @@ fn author(ui: &mut Ui, value: &mut CommitAuthor, l: Language) {
         l.local("Author email", "E-mail do autor"),
         &mut value.email,
     );
+}
+
+fn commit_files(
+    ui: &mut Ui,
+    detail: &Details,
+    view: &NavigationView,
+    l: Language,
+    max_height: f32,
+    p: Palette,
+) -> Option<Command> {
+    ui.strong(format!(
+        "{} · {}",
+        l.local("Changed files", "Arquivos alterados"),
+        detail.files.len()
+    ));
+    let mut action = None;
+    ScrollArea::vertical()
+        .id_salt("commit-paths")
+        .max_height(max_height.min(ui.available_height()).max(0.0))
+        .show_rows(
+            ui,
+            crate::theme::size::CONTROL,
+            detail.files.len(),
+            |ui, visible| {
+                for index in visible {
+                    let file = &detail.files[index];
+                    let stats = file.lines.map_or_else(
+                        || l.text(Text::Binary).to_owned(),
+                        |(add, remove)| format!("+{add} −{remove}"),
+                    );
+                    let path = file.path.to_string_lossy();
+                    let title = file.previous.as_ref().map_or_else(
+                        || path.to_string(),
+                        |old| format!("{} → {path}", old.display()),
+                    );
+                    let selected = view
+                        .patch
+                        .as_ref()
+                        .is_some_and(|patch| patch.key.path == file.path);
+                    if ui
+                        .add_enabled_ui(!view.busy, |ui| {
+                            c::workspace_row(ui, &title, Some(&stats), selected, p)
+                        })
+                        .inner
+                        .on_hover_text(title)
+                        .clicked()
+                    {
+                        action = Some(Command::Patch(
+                            detail.revision.id.clone(),
+                            detail.parent.clone(),
+                            file.path.clone(),
+                        ));
+                    }
+                }
+            },
+        );
+    action
 }
 
 fn commit_metadata(ui: &mut Ui, detail: &Details, l: Language) -> Option<Command> {

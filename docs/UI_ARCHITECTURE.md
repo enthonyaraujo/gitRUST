@@ -68,7 +68,7 @@ The active workspace uses the Stage 01 diff viewport for worker-indexed real pat
 
 ## Stage 05 branches and history
 
-The Branch selector keeps native path and reference identity separate from display labels. History virtualizes graph-aligned commit rows and the commit inspector reuses Unified and Split diffs. Compact tabs keep the history list, metadata and diff reachable at high zoom.
+The Branch selector groups the default branch, local branches and locally available remote-tracking refs. It keeps native reference identity separate from display labels. Changes and History share the resizable sidebar and tab strip. History virtualizes graph-aligned commit rows and opens the first commit in the loaded snapshot. At wide sizes the inspector shows the commit header, changed files and diff together, previewing the first file on demand. Compact tabs keep the history list, metadata and diff reachable at high zoom.
 
 [Branches and History](BRANCHES_AND_HISTORY.md) · [ADR 0010](adr/0010-branches-history-and-merge.md)
 

@@ -480,7 +480,15 @@ impl Desktop {
             let repo_width = if narrow {
                 ((width - 2.0 * gap) * 0.35).max(70.0)
             } else {
-                (width * 0.28).clamp(150.0, 280.0)
+                self.managed
+                    .as_ref()
+                    .filter(|_| active)
+                    .and_then(|manager| manager.sidebar_width)
+                    .map_or_else(
+                        || c::repository_width(width),
+                        |sidebar| sidebar - f32::from(size::MD) - gap,
+                    )
+                    .clamp(135.0, (width * 0.46).max(135.0))
             };
             let branch_width = if narrow {
                 ((width - 2.0 * gap) * 0.30).max(65.0)
@@ -612,8 +620,12 @@ impl Desktop {
                     }
                 }
             });
-        } else if let Some(managed) = self.managed.as_mut().filter(|_| active) {
-            popup.show(|ui| managed.branch_popup(ui, l, p));
+        } else if let Some(managed) = self.managed.as_mut().filter(|_| active)
+            && popup
+                .show(|ui| managed.branch_popup(ui, l, p))
+                .is_some_and(|result| result.inner)
+        {
+            self.screen = Screen::Github;
         }
     }
 

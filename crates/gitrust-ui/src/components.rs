@@ -287,46 +287,59 @@ pub(crate) fn tabs<T: Copy + PartialEq>(
 ) {
     ui.horizontal_wrapped(|ui| {
         for &(value, label) in options {
-            let selected = *current == value;
-            let response = flat_button(
-                ui,
-                RichText::new(label).family(weight()).color(if selected {
-                    p.accent
-                } else {
-                    p.muted
-                }),
-                selected,
-                p,
-            );
-            response.widget_info(|| WidgetInfo::labeled(Role::Tab, ui.is_enabled(), label));
-            ui.ctx()
-                .accesskit_node_builder(response.id, |node| node.set_selected(selected));
-            if selected {
-                let bottom = response.rect.shrink2(vec2(5.0, 0.0));
-                ui.painter().line_segment(
-                    [bottom.left_bottom(), bottom.right_bottom()],
-                    Stroke::new(2.0, p.accent),
-                );
-            }
-            if response.clicked() {
+            if tab(ui, label, *current == value, 0.0, p) {
                 *current = value;
             }
         }
     });
 }
 
+pub(crate) fn full_width_tabs<T: Copy + PartialEq>(
+    ui: &mut Ui,
+    current: &mut T,
+    options: &[(T, &str)],
+    p: Palette,
+) {
+    ui.horizontal(|ui| {
+        let gap = ui.spacing().item_spacing.x;
+        let count = f32::from(u16::try_from(options.len()).unwrap_or(u16::MAX).max(1));
+        let width = (ui.available_width() + gap) / count - gap;
+        for &(value, label) in options {
+            if tab(ui, label, *current == value, width, p) {
+                *current = value;
+            }
+        }
+    });
+}
+
+fn tab(ui: &mut Ui, label: &str, selected: bool, width: f32, p: Palette) -> bool {
+    let text =
+        RichText::new(label)
+            .family(weight())
+            .color(if selected { p.accent } else { p.muted });
+    let response = flat_button(ui, Button::new(text).truncate(), selected, width, p);
+    response.widget_info(|| WidgetInfo::labeled(Role::Tab, ui.is_enabled(), label));
+    ui.ctx()
+        .accesskit_node_builder(response.id, |node| node.set_selected(selected));
+    if selected {
+        let bottom = response.rect.shrink2(vec2(5.0, 0.0));
+        ui.painter().line_segment(
+            [bottom.left_bottom(), bottom.right_bottom()],
+            Stroke::new(2.0, p.accent),
+        );
+    }
+    response.clicked()
+}
+
 fn flat_button(
     ui: &mut Ui,
-    label: impl Into<egui::WidgetText>,
+    button: Button<'_>,
     selected: bool,
+    min_width: f32,
     p: Palette,
 ) -> Response {
     let underlay = ui.painter().add(egui::Shape::Noop);
-    let response = ui.add(
-        Button::new(label.into())
-            .frame(false)
-            .min_size(vec2(0.0, size::CONTROL)),
-    );
+    let response = ui.add(button.frame(false).min_size(vec2(min_width, size::CONTROL)));
     let fill = if response.is_pointer_button_down_on() {
         p.active
     } else if response.hovered() {
@@ -358,9 +371,47 @@ fn flat_button(
 
 pub(crate) fn menu_choice(ui: &mut Ui, label: &str, selected: bool, p: Palette) -> Response {
     let text = RichText::new(label).color(if selected { p.accent } else { p.text });
-    let response = flat_button(ui, text, selected, p);
+    let response = flat_button(ui, Button::new(text), selected, 0.0, p);
     response.widget_info(|| WidgetInfo::selected(Role::MenuItem, ui.is_enabled(), selected, label));
     response
+}
+
+pub(crate) fn branch_choice(
+    ui: &mut Ui,
+    label: &str,
+    current: bool,
+    selected: bool,
+    p: Palette,
+) -> Response {
+    let text = if current {
+        format!("✓  {label} · HEAD")
+    } else {
+        label.to_owned()
+    };
+    let response = workspace_row(ui, &text, None, selected, p);
+    response.widget_info(|| WidgetInfo::selected(Role::MenuItem, ui.is_enabled(), selected, &text));
+    response
+}
+
+pub(crate) fn workspace_row(
+    ui: &mut Ui,
+    label: &str,
+    trailing: Option<&str>,
+    selected: bool,
+    p: Palette,
+) -> Response {
+    let text = RichText::new(label).color(if selected { p.accent } else { p.text });
+    let mut button = Button::new(text).truncate();
+    if let Some(trailing) = trailing {
+        button = button.right_text(RichText::new(trailing).color(p.muted));
+    }
+    let response = flat_button(ui, button, selected, ui.available_width(), p);
+    response.widget_info(|| WidgetInfo::selected(Role::Button, ui.is_enabled(), selected, label));
+    response
+}
+
+pub(crate) fn repository_width(width: f32) -> f32 {
+    (width * 0.29).clamp(230.0, 324.0)
 }
 
 pub(crate) fn context_button(
@@ -447,7 +498,12 @@ pub(crate) fn adjust_panel(ui: &Ui, name: &'static str, delta: f32) {
     }
 }
 
-pub(crate) fn repository_sidebar(ui: &mut Ui, p: Palette, delta: f32, body: impl FnOnce(&mut Ui)) {
+pub(crate) fn repository_sidebar(
+    ui: &mut Ui,
+    p: Palette,
+    delta: f32,
+    body: impl FnOnce(&mut Ui),
+) -> f32 {
     let width = ui.available_width();
     let min = if width < 590.0 {
         (width * 0.41).max(136.0)
@@ -458,10 +514,13 @@ pub(crate) fn repository_sidebar(ui: &mut Ui, p: Palette, delta: f32, body: impl
     adjust_panel(ui, "repository-sidebar", delta);
     Panel::left("repository-sidebar")
         .resizable(true)
-        .default_size((width * 0.37).clamp(min, max))
+        .default_size(repository_width(width).clamp(min, max))
         .size_range(min..=max)
         .frame(panel(p.surface, size::SM))
-        .show(ui, body);
+        .show(ui, body)
+        .response
+        .rect
+        .width()
 }
 
 pub(crate) fn panel(fill: Color32, padding: i8) -> Frame {
@@ -912,7 +971,10 @@ mod tests {
                         events,
                         ..Default::default()
                     },
-                    |ui| response = Some(flat_button(ui, "Changes", true, palette)),
+                    |ui| {
+                        response =
+                            Some(flat_button(ui, Button::new("Changes"), true, 0.0, palette));
+                    },
                 );
                 output.textures_delta.clear();
                 let response = response.expect("rendered button");

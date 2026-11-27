@@ -115,7 +115,7 @@ impl ChangesUi {
                 }
             }
         } else {
-            c::repository_sidebar(ui, p, layout.delta, |ui| {
+            layout.sidebar_width = Some(c::repository_sidebar(ui, p, layout.delta, |ui| {
                 layout.tabs(ui, l, p);
                 let target = (ui.available_height() * 0.49).clamp(124.0, 202.0);
                 let max = (ui.available_height() - 47.0).clamp(105.0, 290.0);
@@ -131,7 +131,7 @@ impl ChangesUi {
                     .add_enabled_ui(enabled, |ui| self.files(ui, view, l, p))
                     .inner
                     .or(command.take());
-            });
+            }));
             c::panel(p.background, 8).show(ui, |ui| {
                 if view.rows.is_empty() {
                     clean(ui);
@@ -265,7 +265,11 @@ impl ChangesUi {
             )
         };
         if view.rows.is_empty() && !self.reveal_filter {
-            ui.label(count);
+            c::panel(p.background, 4).show(ui, |ui| {
+                ui.vertical_centered_justified(|ui| {
+                    ui.colored_label(p.muted, count);
+                });
+            });
             return None;
         }
         let compact = ui.available_height() < 175.0 || ui.available_width() < 245.0;

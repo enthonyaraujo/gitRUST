@@ -111,6 +111,8 @@ impl Form {
 pub(super) struct WorkspaceLayout {
     pub tab: Tab,
     pub has_changes: bool,
+    pub readable: bool,
+    pub sidebar_width: Option<f32>,
     pub delta: f32,
     pub language: Language,
     pub palette: Palette,
@@ -122,7 +124,7 @@ impl WorkspaceLayout {
             (Tab::Changes, l.text(Text::Changes)),
             (Tab::History, l.text(Text::History)),
         ];
-        c::tabs(
+        c::full_width_tabs(
             ui,
             &mut self.tab,
             if self.has_changes { &tabs } else { &tabs[1..] },
@@ -133,12 +135,13 @@ impl WorkspaceLayout {
 }
 
 pub(super) fn single_pane(ui: &Ui) -> bool {
-    ui.available_width() < 365.0 || ui.available_height() < 223.0
+    ui.available_width() < 500.0 || ui.available_height() < 223.0
 }
 
 #[derive(Debug, Default)]
 pub(super) struct ManagerUi {
     pub(super) view: RepositoryView,
+    pub(super) sidebar_width: Option<f32>,
     query: String,
     changes: super::changes::ChangesUi,
     pub(super) navigation: super::navigation::NavigationUi,
@@ -308,9 +311,6 @@ impl ManagerUi {
         }
     }
 
-    pub(super) fn toolbar_remote(&self, l: Language) -> (Option<Command>, String, String) {
-        let Some(view) = &self.view.remotes else {
-            return (
     fn fetch_target(&self) -> Option<&Remote> {
         let view = self.view.remotes.as_ref()?;
         view.entries
@@ -356,6 +356,9 @@ impl ManagerUi {
         })
     }
 
+    pub(super) fn toolbar_remote(&self, l: Language) -> (Option<Command>, String, String) {
+        let Some(view) = &self.view.remotes else {
+            return (
                 None,
                 l.text(Text::Remote).into(),
                 l.local("Loading…", "Carregando…").into(),
@@ -454,7 +457,7 @@ impl ManagerUi {
         }
     }
 
-    pub(super) fn branch_popup(&mut self, ui: &mut Ui, l: Language, p: Palette) {
+    pub(super) fn branch_popup(&mut self, ui: &mut Ui, l: Language, p: Palette) -> bool {
         if let Some(view) = self.view.navigation.as_ref() {
             if let Some(action) =
                 self.navigation
@@ -465,6 +468,20 @@ impl ManagerUi {
         } else {
             ui.label(l.local("Loading local branches…", "Carregando branches locais…"));
         }
+        let github = &self.view.github;
+        if github.workspace_repo.is_some()
+            && ui
+                .add_enabled(
+                    github.active.is_some() && !github.busy,
+                    Button::new(l.local("View pull requests", "Ver pull requests")),
+                )
+                .clicked()
+        {
+            self.github.workspace_pulls(github);
+            ui.close();
+            return true;
+        }
+        false
     }
 
     fn real_changes(&mut self, ui: &mut Ui, p: Palette, l: Language, delta: f32) -> bool {
@@ -502,6 +519,8 @@ impl ManagerUi {
         let mut layout = WorkspaceLayout {
             tab: self.navigation.tab,
             has_changes: changes.is_some(),
+            readable: self.idle() && priority.is_none(),
+            sidebar_width: None,
             delta,
             language: l,
             palette: p,
@@ -561,7 +580,18 @@ impl ManagerUi {
             self.navigation.tab = layout.tab;
             ui.ctx().request_repaint();
         }
+        self.sync_sidebar_width(ui, layout.sidebar_width);
         true
+    }
+
+    fn sync_sidebar_width(&mut self, ui: &Ui, width: Option<f32>) {
+        if self.sidebar_width.zip(width).map_or(
+            self.sidebar_width.is_some() != width.is_some(),
+            |(previous, current)| (previous - current).abs() > 0.5,
+        ) {
+            self.sidebar_width = width;
+            ui.ctx().request_repaint();
+        }
     }
 
     fn workspace_operations(&mut self, ui: &mut Ui, p: Palette, l: Language) {
