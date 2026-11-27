@@ -377,7 +377,10 @@ impl NavigationUi {
                 }
             });
         }
-        if let Some(notice) = view.notice {
+        if let Some(notice) = view
+            .notice
+            .filter(|notice| *notice != NavigationNotice::BranchUpdated)
+        {
             ui.label(notice_text(notice, l));
         }
     }
