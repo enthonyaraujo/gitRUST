@@ -10,7 +10,11 @@ Inspired by the approachable workflow of [GitHub Desktop](https://github.com/des
 
 > **Current stage:** Stage 07 — GitHub Integration, local implementation under review (`v0.1.0-alpha.0`).
 
-Open and authorize a local repository, create a new one, or clone over HTTPS or SSH. The Changes workspace shows real staged and unstaged diffs, supports file and partial staging, and creates commits from the index. Reviewed discard, amend, and explicit commit signing are available. The application also supports local branches, commit history and basic merges. The Remote selector manages remotes and upstreams and provides explicit fetch, pull, push and branch publication. [Remote operations](docs/REMOTE_OPERATIONS.md) · [GitHub integration](docs/GITHUB_INTEGRATION.md) Settings provides Light, Dark and System themes, English and Brazilian Portuguese, and 100%–200% zoom.
+- **Repositories.** Open, create, or clone repositories over HTTPS or SSH. On startup, gitRUST reopens the last workspace and reuses approval for local Git metadata when the repository identity still matches.
+- **Changes and History.** Review staged and unstaged diffs, stage files or selected changes, create and amend commits, and inspect commit history. The branch picker switches local branches and offers context actions on right-click.
+- **Remote operations.** Fetch `origin` directly from the toolbar. When the current branch is ahead of its upstream and has no incoming commits, gitRUST shows the pending commit count and a push action. Routine success messages stay out of the workspace. Errors and recovery controls appear in the workspace footer.
+- **GitHub.** Sign in through the default browser using the gitRUST OAuth App and return to the original window after authorization. Local Git workflows are available without a linked account. Development builds may require [OAuth App configuration](docs/GITHUB_OAUTH_SETUP.md).
+- **Settings.** Choose Light, Dark, or System appearance, English or Brazilian Portuguese, and 100%–200% zoom.
 
 Run `gitrust --diagnostics` to explore the component gallery. The [roadmap](docs/ROADMAP.md) describes the Linux-first MVP and the Stage 08 cross-platform release gate.
 
@@ -70,8 +74,8 @@ cargo test --workspace
 # Build optimized release binary
 cargo build --workspace --release
 
-# Launch the desktop application
-cargo run -p gitrust-app --release
+# Launch the release binary on Linux
+./target/release/gitrust
 ```
 
 ---
@@ -80,6 +84,9 @@ cargo run -p gitrust-app --release
 
 - [Design System](docs/DESIGN_SYSTEM.md) — Visual direction, tokens, typography, and component catalog.
 - [Branches and History](docs/BRANCHES_AND_HISTORY.md) — Branch operations, the commit graph, commit inspection, and merges.
+- [Remote Operations](docs/REMOTE_OPERATIONS.md) — Remotes, upstreams, fetch, pull, push, and branch publication.
+- [GitHub Integration](docs/GITHUB_INTEGRATION.md) — Linked accounts and GitHub repository workflows.
+- [GitHub Authentication](docs/GITHUB_AUTHENTICATION.md) — Browser sign-in, credential handling, and Device Flow.
 - [Changes and Commits](docs/CHANGES_AND_COMMITS.md) — Real diffs, staging, discard, commit creation, amend, and signing.
 - [Native UI Architecture](docs/UI_ARCHITECTURE.md) — Shell modules, diagnostic mode, and scalable rendering.
 - [Accessibility](docs/ACCESSIBILITY.md) — Keyboard operation, AccessKit, and validation scope.
